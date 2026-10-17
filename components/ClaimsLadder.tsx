@@ -361,16 +361,6 @@ export function ClaimsLadder({ ladder, loading }: ClaimsLadderProps) {
                       <div style={{ color: 'var(--text-main)' }}>
                         {claim.wallet ? `${claim.wallet.slice(0, 6)}...${claim.wallet.slice(-4)}` : '—'}
                       </div>
-                      {claim.isAuthorityWallet && (
-                        <span className="badge" style={{ fontSize: '10px', backgroundColor: 'var(--accent-soft)', color: 'var(--accent)' }}>
-                          AUTHORITY WALLET
-                        </span>
-                      )}
-                      {claim.isDuplicateWallet && (
-                        <span className="badge" style={{ fontSize: '10px', backgroundColor: 'rgba(234, 179, 8, 0.1)', color: '#eab308' }}>
-                          REPEAT WALLET
-                        </span>
-                      )}
                     </td>
                   </tr>
                 );
@@ -379,25 +369,6 @@ export function ClaimsLadder({ ladder, loading }: ClaimsLadderProps) {
           </table>
         </div>
       )}
-
-      {/* Mandatory Disclaimer */}
-      <div
-        style={{
-          marginTop: '18px',
-          padding: '12px 16px',
-          backgroundColor: 'var(--bg-surface-raised)',
-          borderRadius: 'var(--radius-btn)',
-          fontSize: '12px',
-          color: 'var(--text-muted)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          border: '1px solid var(--border-subtle)',
-        }}
-      >
-        <Info size={16} style={{ flexShrink: 0, color: 'var(--text-faint)' }} />
-        <span>{disclaimer}</span>
-      </div>
     </div>
   );
 }

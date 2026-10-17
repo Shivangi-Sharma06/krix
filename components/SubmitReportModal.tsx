@@ -27,7 +27,7 @@ export function SubmitReportModal({
   onSuccess,
   onReportSubmitted,
 }: SubmitReportModalProps) {
-  const { getArkivClient, address, isConnected, isCorrectNetwork, switchNetwork } = useWallet();
+  const { getArkivClient, address, isConnected, isCorrectNetwork, switchNetwork, userRole } = useWallet();
 
   const [verdict, setVerdict] = useState<GroundReportVerdict>('DAMAGED');
   const [severity, setSeverity] = useState<number>(8);
@@ -91,6 +91,11 @@ export function SubmitReportModal({
     e.preventDefault();
     setErrorMessage(null);
 
+    if (userRole === 'authority') {
+      setErrorMessage('Authority accounts cannot submit ground reports. Only citizens and intermediaries may report field observations.');
+      return;
+    }
+
     if (!isConnected) {
       setErrorMessage('Please connect your Web3 wallet.');
       return;
@@ -142,6 +147,51 @@ export function SubmitReportModal({
       setLoading(false);
     }
   };
+
+  if (userRole === 'authority') {
+    return (
+      <div
+        role="dialog"
+        aria-modal="true"
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(10, 9, 8, 0.8)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '16px',
+        }}
+      >
+        <div
+          className="card"
+          style={{
+            maxWidth: '480px',
+            width: '100%',
+            padding: '32px',
+            textAlign: 'center',
+            boxShadow: 'none',
+          }}
+        >
+          <div style={{ fontSize: '32px', marginBottom: '16px' }}>⚖️</div>
+          <h2 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '10px' }}>
+            Authority Role Restriction
+          </h2>
+          <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: '1.6', marginBottom: '24px' }}>
+            Authority accounts cannot submit ground reality citizen reports. Authorities may only issue promises, update official statuses, and reply to citizen reports.
+          </p>
+          <button onClick={onClose} className="btn btn-secondary btn-md" style={{ width: '100%' }}>
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

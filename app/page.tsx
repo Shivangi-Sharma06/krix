@@ -272,7 +272,7 @@ export default function LandingPage() {
                   Continue as citizen &rarr;
                 </span>
                 <div style={{ textAlign: 'center', fontSize: '12px', color: 'var(--text-faint)' }}>
-                  No account needed.
+                  Wallet is needed.
                 </div>
               </div>
             </Link>

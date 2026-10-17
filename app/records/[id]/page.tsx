@@ -33,7 +33,6 @@ import { detectCoverUp, buildClaimsLadder } from '@/lib/detect';
 import { getIpfsGatewayUrls } from '@/lib/ipfs';
 import { isDemoModeActive } from '@/lib/config';
 import { SubmitReportModal } from '@/components/SubmitReportModal';
-import { TimeTravelSlider } from '@/components/TimeTravelSlider';
 import { CoverUpAlert } from '@/components/CoverUpAlert';
 import { ClaimsLadder } from '@/components/ClaimsLadder';
 import { type Hex, getAddress, isAddress } from 'viem';
@@ -41,7 +40,8 @@ import { type Hex, getAddress, isAddress } from 'viem';
 export default function RecordDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const rawKey = decodeURIComponent(resolvedParams.id);
-  const { address, getArkivClient } = useWallet();
+  const { address, getArkivClient, userRole } = useWallet();
+  const isAuthority = userRole === 'authority';
 
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -682,13 +682,15 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
             Extend Record Lifetime (+365d)
           </button>
 
-          <button
-            onClick={() => setShowReportModal(true)}
-            className="btn btn-primary btn-md"
-            style={{ marginLeft: 'auto' }}
-          >
-            + Submit Ground Reality Form
-          </button>
+          {!isAuthority && (
+            <button
+              onClick={() => setShowReportModal(true)}
+              className="btn btn-primary btn-md"
+              style={{ marginLeft: 'auto' }}
+            >
+              + Submit Ground Reality Form
+            </button>
+          )}
         </div>
       </div>
 
@@ -696,15 +698,6 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px', alignItems: 'start' }}>
         {/* Left Column */}
         <div style={{ gridColumn: 'span 2' }}>
-          {/* Time-Travel Slider */}
-          <TimeTravelSlider
-            currentRecord={recordMeta.payload}
-            historicalBlocks={revisionBlocks}
-            selectedBlock={selectedBlock}
-            onBlockChange={handleBlockChange}
-            recordAtSelectedBlock={historicalRecord}
-          />
-
           {/* Cover-Up & Tampering Check */}
           <CoverUpAlert
             detection={detectionResult}
@@ -734,9 +727,11 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
                   Uncensorable submissions linked to canonical entity key.
                 </div>
               </div>
-              <button onClick={() => setShowReportModal(true)} className="btn btn-primary btn-md" style={{ height: '32px', fontSize: '12px' }}>
-                + Submit Report
-              </button>
+              {!isAuthority && (
+                <button onClick={() => setShowReportModal(true)} className="btn btn-primary btn-md" style={{ height: '32px', fontSize: '12px' }}>
+                  + Submit Report
+                </button>
+              )}
             </div>
 
             {reports.length === 0 ? (
@@ -1030,9 +1025,19 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
             )}
           </div>
 
-          <button onClick={() => setShowReportModal(true)} className="btn btn-primary btn-lg" style={{ width: '100%' }}>
-            Submit Ground Reality Form
-          </button>
+          {isAuthority ? (
+            <Link
+              href={`/authority/promise/${encodeURIComponent(rawKey)}`}
+              className="btn btn-primary btn-lg"
+              style={{ width: '100%', justifyContent: 'center', textAlign: 'center', display: 'flex' }}
+            >
+              Manage Official Promise &rarr;
+            </Link>
+          ) : (
+            <button onClick={() => setShowReportModal(true)} className="btn btn-primary btn-lg" style={{ width: '100%' }}>
+              Submit Ground Reality Form
+            </button>
+          )}
         </div>
       </div>
 

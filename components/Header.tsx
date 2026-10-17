@@ -31,8 +31,7 @@ export function Header() {
   const [activeRpc, setActiveRpc] = useState(RPC_URL);
   const [isScrolled, setIsScrolled] = useState(false);
   const [announcementDismissed, setAnnouncementDismissed] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [navVisible, setNavVisible] = useState(!isLandingPage);
+  const [navVisible, setNavVisible] = useState(false);
 
   const demoMode = isDemoModeActive();
 
@@ -43,6 +42,12 @@ export function Header() {
     }
 
     const checkVisibility = () => {
+      // Must not appear on page load or before user scrolls significantly
+      if (typeof window === 'undefined' || window.scrollY < 200) {
+        setNavVisible(false);
+        return;
+      }
+
       const heroRoles = document.getElementById('hero-roles');
       if (heroRoles) {
         const rect = heroRoles.getBoundingClientRect();
@@ -53,6 +58,7 @@ export function Header() {
       }
     };
 
+    setNavVisible(false);
     checkVisibility();
     window.addEventListener('scroll', checkVisibility, { passive: true });
     window.addEventListener('resize', checkVisibility);
