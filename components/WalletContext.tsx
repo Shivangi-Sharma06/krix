@@ -44,6 +44,8 @@ export const PRESET_WALLETS: DemoWallet[] = [
   },
 ];
 
+export type UserRole = 'citizen' | 'authority' | null;
+
 interface WalletContextType {
   address: Hex | null;
   isConnected: boolean;
@@ -52,6 +54,8 @@ interface WalletContextType {
   balanceGlm: string;
   isCorrectNetwork: boolean;
   showDemoSwitcher: boolean;
+  userRole: UserRole;
+  setUserRole: (role: UserRole) => void;
   connectMetaMask: () => Promise<void>;
   switchNetwork: () => Promise<void>;
   switchDemoWallet: (wallet: DemoWallet) => void;
@@ -67,6 +71,8 @@ const WalletContext = createContext<WalletContextType>({
   balanceGlm: '0.00',
   isCorrectNetwork: true,
   showDemoSwitcher: false,
+  userRole: null,
+  setUserRole: () => {},
   connectMetaMask: async () => {},
   switchNetwork: async () => {},
   switchDemoWallet: () => {},
@@ -81,6 +87,35 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [balanceGlm, setBalanceGlm] = useState('0.00');
   const [isCorrectNetwork, setIsCorrectNetwork] = useState(true);
   const [showDemoSwitcher, setShowDemoSwitcher] = useState(false);
+  const [userRole, setUserRoleState] = useState<UserRole>(null);
+
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const saved = localStorage.getItem('krix_user_role') as UserRole;
+        if (saved === 'citizen' || saved === 'authority') {
+          setUserRoleState(saved);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const setUserRole = (role: UserRole) => {
+    setUserRoleState(role);
+    try {
+      if (typeof window !== 'undefined') {
+        if (role) {
+          localStorage.setItem('krix_user_role', role);
+        } else {
+          localStorage.removeItem('krix_user_role');
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
 
   const TIRAMISU_CHAIN_ID = 7738577;
   const TIRAMISU_CHAIN_ID_HEX = '0x7614d1'; // 7738577 in hex (0x7614d1)
@@ -336,6 +371,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         balanceGlm,
         isCorrectNetwork,
         showDemoSwitcher,
+        userRole,
+        setUserRole,
         connectMetaMask,
         switchNetwork,
         switchDemoWallet,

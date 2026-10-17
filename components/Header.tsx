@@ -18,6 +18,8 @@ export function Header() {
     balanceGlm,
     isCorrectNetwork,
     showDemoSwitcher,
+    userRole,
+    setUserRole,
     connectMetaMask,
     switchNetwork,
     switchDemoWallet,
@@ -196,7 +198,7 @@ export function Header() {
         }}
       >
         {/* Left: Logo & Brand */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
           <Link
             href="/"
             style={{
@@ -225,13 +227,52 @@ export function Header() {
             </span>
           </Link>
 
+          {/* Active Role Chip in App Shell */}
+          {userRole && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span
+                className="badge"
+                style={{
+                  backgroundColor: userRole === 'authority' ? 'var(--accent-soft)' : 'var(--bg-surface-raised)',
+                  color: userRole === 'authority' ? 'var(--accent)' : 'var(--text-main)',
+                  border: `1px solid ${userRole === 'authority' ? 'var(--border-strong)' : 'var(--border-subtle)'}`,
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                  padding: '3px 8px',
+                }}
+              >
+                {userRole === 'authority' ? 'Authority' : 'Citizen'}
+              </span>
+              <button
+                onClick={() => {
+                  const nextRole = userRole === 'citizen' ? 'authority' : 'citizen';
+                  setUserRole(nextRole);
+                }}
+                className="btn btn-secondary"
+                style={{
+                  padding: '2px 8px',
+                  fontSize: '11px',
+                  height: '24px',
+                  color: 'var(--text-muted)',
+                  border: '1px solid var(--border-subtle)',
+                }}
+                title="Switch between Citizen and Authority roles"
+              >
+                Switch role
+              </button>
+            </div>
+          )}
+
           {/* Navigation Links (Desktop) */}
           <nav
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '20px',
+              gap: '18px',
               fontSize: '14px',
+              marginLeft: '6px',
             }}
             className="nav-desktop"
           >
@@ -256,6 +297,24 @@ export function Header() {
             ) : (
               <>
                 <Link
+                  href="/citizen"
+                  style={{
+                    color: pathname.startsWith('/citizen') ? 'var(--text-main)' : 'var(--text-muted)',
+                    fontWeight: pathname.startsWith('/citizen') ? 600 : 400,
+                  }}
+                >
+                  Citizen
+                </Link>
+                <Link
+                  href="/authority"
+                  style={{
+                    color: pathname.startsWith('/authority') ? 'var(--text-main)' : 'var(--text-muted)',
+                    fontWeight: pathname.startsWith('/authority') ? 600 : 400,
+                  }}
+                >
+                  Authority
+                </Link>
+                <Link
                   href="/records"
                   style={{
                     color: pathname === '/records' ? 'var(--text-main)' : 'var(--text-muted)',
@@ -264,15 +323,17 @@ export function Header() {
                 >
                   Records
                 </Link>
-                <Link
-                  href="/new"
-                  style={{
-                    color: pathname === '/new' ? 'var(--text-main)' : 'var(--text-muted)',
-                    fontWeight: pathname === '/new' ? 600 : 400,
-                  }}
-                >
-                  + New Record
-                </Link>
+                {userRole === 'authority' && (
+                  <Link
+                    href="/new"
+                    style={{
+                      color: pathname === '/new' ? 'var(--text-main)' : 'var(--text-muted)',
+                      fontWeight: pathname === '/new' ? 600 : 400,
+                    }}
+                  >
+                    + New Promise
+                  </Link>
+                )}
                 <Link
                   href="/how-it-works"
                   style={{
@@ -327,11 +388,24 @@ export function Header() {
             </span>
           </div>
 
-          {/* Landing page "Open app" CTA */}
+          {/* Landing page role CTAs (Remove generic Open app) */}
           {isLandingPage ? (
-            <Link href="/records" className="btn btn-primary btn-md">
-              Open app &rarr;
-            </Link>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Link
+                href="/citizen"
+                className="btn btn-secondary btn-md"
+                style={{ fontSize: '13px', height: '32px', padding: '0 12px' }}
+              >
+                Citizen
+              </Link>
+              <Link
+                href="/authority"
+                className="btn btn-primary btn-md"
+                style={{ fontSize: '13px', height: '32px', padding: '0 12px' }}
+              >
+                Authority
+              </Link>
+            </div>
           ) : (
             <>
               {/* App page: Faucet link & balance */}
