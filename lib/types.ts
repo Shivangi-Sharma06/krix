@@ -183,6 +183,17 @@ export interface LadderClaimEntry {
   notes?: string;
   photoCids?: string[];
   rawEntityKey?: string;
+  targetKey?: string;
+  targetType?: 'complaint' | 'statement';
+  officialRole?: string;
+  matchedResponses?: Array<{
+    key: string;
+    text: string;
+    officialRole?: string;
+    blockNumber: bigint;
+    txHash: string;
+    wallet: string;
+  }>;
 }
 
 export interface LadderFinding {

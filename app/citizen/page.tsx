@@ -16,6 +16,7 @@ export default function CitizenPage() {
   const [selectedDistrict, setSelectedDistrict] = useState('ALL');
   const [selectedRecordForReport, setSelectedRecordForReport] = useState<EntityWithMetadata<CivicRecordPayload> | null>(null);
   const [reportedTx, setReportedTx] = useState<string | null>(null);
+  const [lastReportedKey, setLastReportedKey] = useState<string | null>(null);
 
   // Set convenience role in localStorage
   useEffect(() => {
@@ -140,21 +141,38 @@ export default function CitizenPage() {
             backgroundColor: 'var(--success-bg)',
             border: '1px solid var(--success-border)',
             color: 'var(--success)',
-            padding: '14px 18px',
+            padding: '16px 20px',
             borderRadius: 'var(--radius-card)',
             marginBottom: '28px',
             fontSize: '14px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '12px',
           }}
         >
-          <strong>Report successfully recorded on-chain:</strong>{' '}
-          <a
-            href={`https://tiramisu.explorer.arkiv.network/tx/${reportedTx}`}
-            target="_blank"
-            rel="noreferrer"
-            style={{ color: 'var(--accent)', textDecoration: 'underline' }}
-          >
-            View transaction on Tiramisu explorer &rarr;
-          </a>
+          <div>
+            <strong>Report successfully recorded on-chain:</strong>{' '}
+            <a
+              href={`https://tiramisu.explorer.arkiv.network/tx/${reportedTx}`}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: 'var(--accent)', textDecoration: 'underline', marginLeft: '6px' }}
+            >
+              View transaction on Tiramisu explorer &rarr;
+            </a>
+          </div>
+
+          {lastReportedKey && (
+            <Link
+              href={`/citizen/promise/${lastReportedKey}`}
+              className="btn btn-primary btn-md"
+              style={{ fontSize: '13px' }}
+            >
+              See Claims Ladder &rarr;
+            </Link>
+          )}
         </div>
       )}
 
@@ -290,6 +308,7 @@ export default function CitizenPage() {
           onClose={() => setSelectedRecordForReport(null)}
           onReportSubmitted={(txHash) => {
             setReportedTx(txHash || null);
+            setLastReportedKey(selectedRecordForReport.key);
             setSelectedRecordForReport(null);
           }}
         />

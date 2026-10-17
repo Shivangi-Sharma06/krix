@@ -61,9 +61,6 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
   const [revisions, setRevisions] = useState<RecordRevision[]>([]);
   const [custodyChain, setCustodyChain] = useState<CustodyHop[]>([]);
 
-  // Time-Travel state
-  const [selectedBlock, setSelectedBlock] = useState<bigint | null>(null);
-  const [historicalRecord, setHistoricalRecord] = useState<CivicRecordPayload | null>(null);
 
   // Cover up & tampering detection
   const [detectionResult, setDetectionResult] = useState<CoverUpDetectionResult | null>(null);
@@ -233,23 +230,6 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
     }
   };
 
-  // Time-Travel block scrubber handler (Item 7)
-  const handleBlockChange = async (block: bigint | null) => {
-    setSelectedBlock(block);
-    if (block === null) {
-      setHistoricalRecord(null);
-      return;
-    }
-
-    try {
-      const histData = await fetchCivicRecordByKey(rawKey as Hex, block);
-      if (histData) {
-        setHistoricalRecord(histData.record.payload);
-      }
-    } catch (err) {
-      console.warn('Historical block fetch fallback:', err);
-    }
-  };
 
   // Custodian: Update Transit Status (patchCivicRecordOnChain, Item 2, Item 4)
   const handleUpdateStatus = async (e: React.FormEvent) => {
@@ -492,11 +472,6 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
     validReportCounts.length > 0
       ? Math.round(validReportCounts.reduce((acc, cur) => acc + (cur.payload.count_received || 0), 0) / validReportCounts.length)
       : null;
-
-  // Revision blocks for time travel scrubber
-  const revisionBlocks = Array.from(
-    new Set([recordMeta.createdAt, ...revisions.map((r) => r.blockNumber), ...reports.map((rp) => rp.blockNumber)])
-  ).filter((b) => b > 0n);
 
   let statusBadgeClass = 'badge-default';
   if (record.status === 'ALL_GOOD_DELIVERED' || record.status === 'DELIVERED') {
@@ -831,6 +806,44 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
                           })}
                         </div>
                       )}
+
+                      {/* Attached Official Authority Replies */}
+                      {(() => {
+                        const matchedResponses = authorityResponses.filter(
+                          (ar) => ar.payload.target_key && ar.payload.target_key.toLowerCase() === rep.key.toLowerCase()
+                        );
+                        if (matchedResponses.length === 0) return null;
+                        return (
+                          <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            {matchedResponses.map((ar, aIdx) => (
+                              <div
+                                key={aIdx}
+                                style={{
+                                  padding: '10px 14px',
+                                  backgroundColor: 'rgba(234, 114, 18, 0.08)',
+                                  border: '1px solid rgba(234, 114, 18, 0.35)',
+                                  borderRadius: 'var(--radius-btn)',
+                                }}
+                              >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: 'var(--accent)', fontWeight: 600 }}>
+                                  <span>Official Authority Response</span>
+                                  <span className="mono" style={{ fontSize: '11px', color: 'var(--text-faint)', fontWeight: 400 }}>
+                                    Block #{ar.blockNumber.toString()}
+                                  </span>
+                                </div>
+                                <div style={{ fontSize: '13px', color: 'var(--text-main)', marginTop: '4px', lineHeight: 1.5 }}>
+                                  &ldquo;{ar.payload.response_text}&rdquo;
+                                </div>
+                                {ar.payload.official_role && (
+                                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                                    &mdash; {ar.payload.official_role}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
 
                       <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '12px', paddingTop: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: 'var(--text-faint)' }}>
                         <div>

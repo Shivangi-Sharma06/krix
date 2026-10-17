@@ -465,6 +465,18 @@ export function buildClaimsLadder(input: ClaimsLadderInput): ClaimsLadderResult 
       seenWallets.add(creatorLower);
     }
 
+    const reportKeyLower = (rp.key || '').toLowerCase();
+    const matched = responses
+      .filter((res) => res.payload.target_key && res.payload.target_key.toLowerCase() === reportKeyLower)
+      .map((res) => ({
+        key: res.key || res.txHash,
+        text: res.payload.response_text,
+        officialRole: res.payload.official_role,
+        blockNumber: res.blockNumber,
+        txHash: res.txHash,
+        wallet: res.creator,
+      }));
+
     claims.push({
       id: rp.key || `rp-${rp.txHash.slice(0, 10)}`,
       source: 'CITIZEN_REPORT',
@@ -480,6 +492,7 @@ export function buildClaimsLadder(input: ClaimsLadderInput): ClaimsLadderResult 
       notes: rp.payload.description,
       photoCids: rp.payload.photo_cids,
       rawEntityKey: rp.key,
+      matchedResponses: matched.length > 0 ? matched : undefined,
     });
   }
 
@@ -496,6 +509,9 @@ export function buildClaimsLadder(input: ClaimsLadderInput): ClaimsLadderResult 
       partyType: 'AUTHORITY',
       notes: resp.payload.response_text,
       rawEntityKey: resp.key,
+      targetKey: resp.payload.target_key,
+      targetType: resp.payload.target_type,
+      officialRole: resp.payload.official_role,
     });
   }
 

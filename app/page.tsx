@@ -7,7 +7,7 @@ import { LiveChainStrip } from '@/components/LiveChainStrip';
 import { ScrollExpand } from '@/components/ScrollExpand';
 import { AnimatedContent } from '@/components/AnimatedContent';
 import { EXPLORER_URL, FAUCET_URL } from '@/lib/arkiv';
-import { Truck, ChevronDown } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 
 export default function LandingPage() {
   const [isScrollExpanded, setIsScrollExpanded] = useState(false);
@@ -348,43 +348,6 @@ export default function LandingPage() {
             </Link>
           </AnimatedContent>
 
-          {/* Third Entry Underneath Hero Cards: Intermediaries / Statements */}
-          <AnimatedContent distance={30} direction="vertical" duration={0.7} ease="power3.out" threshold={0.1}>
-            <div style={{ maxWidth: '640px', margin: '-12px auto 44px' }}>
-              <Link
-                href="/party"
-                style={{
-                  textDecoration: 'none',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '14px 20px',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-card)',
-                  backgroundColor: 'var(--bg-surface)',
-                  transition: 'border-color 0.2s ease, background-color 0.2s ease',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = 'var(--accent)';
-                  e.currentTarget.style.backgroundColor = 'var(--bg-surface-raised)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = 'var(--border-subtle)';
-                  e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <Truck size={18} style={{ color: 'var(--text-muted)' }} />
-                  <span style={{ fontSize: '14px', color: 'var(--text-main)', fontWeight: 500 }}>
-                    I handle deliveries (transport, distributor, clinic staff)
-                  </span>
-                </div>
-                <span style={{ fontSize: '13px', color: 'var(--accent)', fontWeight: 600 }}>
-                  Record Statement &rarr;
-                </span>
-              </Link>
-            </div>
-          </AnimatedContent>
 
           {/* Hero Visual: Subtle product mock placed below role cards */}
           <AnimatedContent distance={40} direction="vertical" duration={0.8} ease="power3.out" threshold={0.1}>
@@ -755,9 +718,6 @@ export default function LandingPage() {
                 </div>
                 <Link href="/citizen" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
                   Citizen
-                </Link>
-                <Link href="/party" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
-                  Statements (Intermediaries)
                 </Link>
                 <Link href="/authority" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>
                   Authority

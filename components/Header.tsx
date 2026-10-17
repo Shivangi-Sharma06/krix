@@ -339,20 +339,6 @@ export function Header() {
                 Citizen
               </Link>
               <Link
-                href="/party"
-                style={{
-                  padding: '4px 10px',
-                  borderRadius: '6px',
-                  color: pathname.startsWith('/party') ? 'var(--text-main)' : 'var(--text-muted)',
-                  backgroundColor: pathname.startsWith('/party') ? 'var(--bg-surface-raised)' : 'transparent',
-                  fontWeight: pathname.startsWith('/party') ? 600 : 500,
-                  textDecoration: 'none',
-                  transition: 'color 0.15s, background-color 0.15s',
-                }}
-              >
-                Statements
-              </Link>
-              <Link
                 href="/authority"
                 style={{
                   padding: '4px 10px',

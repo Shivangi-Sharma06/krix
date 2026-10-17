@@ -668,7 +668,15 @@ export async function fetchCivicRecords(): Promise<EntityWithMetadata<CivicRecor
     }
   }
 
-  return allEntities;
+  // Filter out specific test entity 'winfnwe' from UI while preserving on-chain state
+  const filtered = allEntities.filter((e) => {
+    const title = e.payload?.title?.trim().toLowerCase();
+    const ref = e.payload?.reference_code?.trim().toLowerCase();
+    const key = e.key?.toLowerCase();
+    return title !== 'winfnwe' && ref !== 'kx-med-gun-2026-xgyrw7' && key !== '0x8267be0f1cb4164033b99445df703a64d09caae80928a8b287c93b3308dd659e';
+  });
+
+  return filtered;
 }
 
 /**

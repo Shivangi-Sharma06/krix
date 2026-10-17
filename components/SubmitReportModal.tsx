@@ -259,23 +259,7 @@ export function SubmitReportModal({
           <strong>This report will be permanent and public.</strong> No one can edit or delete it once submitted to the Arkiv blockchain.
         </div>
 
-        {/* Reporter Custodian Notice (Item 5) */}
-        {isReporterCustodian && (
-          <div
-            role="alert"
-            style={{
-              border: '1px solid var(--warning-border)',
-              backgroundColor: 'var(--warning-bg)',
-              color: 'var(--warning)',
-              padding: '12px 16px',
-              borderRadius: 'var(--radius-btn)',
-              fontSize: '13px',
-              marginBottom: '16px',
-            }}
-          >
-            <strong>Custodian Wallet Detected:</strong> Your wallet is identified as an official custodian of this record. Your submission will be marked &ldquo;submitted by custodian&rdquo; and excluded from independent auditor counts.
-          </div>
-        )}
+
 
         {errorMessage && (
           <div

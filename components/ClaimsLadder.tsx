@@ -317,12 +317,52 @@ export function ClaimsLadder({ ladder, loading }: ClaimsLadderProps) {
 
                     {/* Notes & Photos */}
                     <td style={{ padding: '12px 14px', verticalAlign: 'top', maxWidth: '280px' }}>
+                      {claim.targetKey && (
+                        <div style={{ fontSize: '11px', color: 'var(--accent)', marginBottom: '4px', fontWeight: 500 }}>
+                          ↳ Replying to {claim.targetType === 'statement' ? 'statement' : 'citizen complaint'} (<span className="mono">{claim.targetKey.slice(0, 10)}...</span>)
+                        </div>
+                      )}
+
                       {claim.notes ? (
                         <div style={{ fontSize: '13px', color: 'var(--text-main)', lineHeight: 1.4, marginBottom: '6px' }}>
                           {claim.notes}
                         </div>
                       ) : (
                         <span style={{ color: 'var(--text-faint)' }}>—</span>
+                      )}
+
+                      {/* Matched Authority Replies directly attached to this citizen report */}
+                      {claim.matchedResponses && claim.matchedResponses.length > 0 && (
+                        <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          {claim.matchedResponses.map((mr, mrIdx) => (
+                            <div
+                              key={mrIdx}
+                              style={{
+                                padding: '8px 10px',
+                                backgroundColor: 'rgba(234, 114, 18, 0.08)',
+                                border: '1px solid rgba(234, 114, 18, 0.35)',
+                                borderRadius: 'var(--radius-btn)',
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px', fontSize: '11px', color: 'var(--accent)', fontWeight: 600 }}>
+                                <span>Official Authority Reply</span>
+                                {mr.blockNumber > 0n && (
+                                  <span className="mono" style={{ color: 'var(--text-faint)', fontWeight: 400 }}>
+                                    Block #{mr.blockNumber.toString()}
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ fontSize: '13px', color: 'var(--text-main)', marginTop: '4px', lineHeight: 1.4 }}>
+                                &ldquo;{mr.text}&rdquo;
+                              </div>
+                              {mr.officialRole && (
+                                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                                  &mdash; {mr.officialRole}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       )}
 
                       {claim.photoCids && claim.photoCids.length > 0 && (

@@ -1,112 +1,156 @@
-# Krix — Tamper-Evident Civic Audit Layer
+<div align="center">
+<!-- DEMO VIDEO: replace the line below with the YouTube link -->
+Demo video: YOUTUBE_LINK_HERE
+</div>
 
-> *Supplies can be delayed. Truth cannot be deleted.*
+<div align="center">
+<img src="public/logo.svg" width="80" alt="Krix Logo" />
+<pre>
+██╗  ██╗██████╗ ██╗██╗  ██╗
+██║ ██╔╝██╔══██╗██║╚██╗██╔╝
+█████╔╝ ██████╔╝██║ ╚███╔╝ 
+██╔═██╗ ██╔══██╗██║ ██╔██╗ 
+██║  ██╗██║  ██║██║██╔╝ ██╗
+╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝
+</pre>
+</div>
 
-Krix is a public, tamper-evident audit layer for government civic projects and public distribution supply chains (medicine batches, relief kits, and ward civic works).
+<div align="center">
+<b>They can edit their status. Not your voice.</b>
+<br>
+Jo likha, wo likha.
+</div>
 
-It is built with **Next.js 15 (React 19, TypeScript)**, **Viem**, **@arkiv-network/sdk (v0.8.1)** on the **Tiramisu Testnet** (Chain ID: 7738577), and client-side privacy-preserving IPFS photo handling.
+<div align="center">
 
----
+![Built on Arkiv](https://img.shields.io/badge/Built%20on-Arkiv-orange)
+![Network](https://img.shields.io/badge/Network-Tiramisu%20Testnet-blue)
+![Next.js](https://img.shields.io/badge/Next.js-15-black)
+![License: MIT](https://img.shields.io/badge/License-MIT-green)
 
-## 1. What is Live vs Simulated (Honest Status)
-
-| Feature / Primitive | Live Status on Tiramisu | Notes |
-|---|---|---|
-| **Tiramisu RPC Node Connectivity** | **LIVE** | Live HTTP RPC connection to `https://rpc.tiramisu.db-chain.testnet.arkiv.network`. Real block number polled every 15s (`#a8900+`). Header reflects network health and fallback status. |
-| **Arkiv SDK Query Engine (`select`, `atBlock`)** | **LIVE** | Arkiv queries execute against the live testnet node. Supported filter syntax: `type = str('civic_record')` and custom attributes wrapped in `str(...)`. |
-| **On-Chain Entity Creation & Transactions** | **LIVE (Gas Required)** | Live `createEntity`, `patchEntity`, `changeOwnership`, and `extendEntity` execute via Viem on contract `0x4400000000000000000000000000000000000044`. Requires funded `$GLM` test tokens. |
-| **Demo / Simulation Mode** | **OPTIONAL (Explicit Flag)** | Controlled strictly by `NEXT_PUBLIC_DEMO_MODE=true`. Displays a permanent yellow banner: *"DEMO MODE - data is simulated locally and is not on the live blockchain"*. In production (`NODE_ENV=production`), demo mode is blocked unless `NEXT_PUBLIC_ALLOW_DEMO_IN_PROD=true` is explicitly provided. |
-| **Cover-Up Detection Algorithm (`lib/detect.ts`)** | **LIVE & PURE** | 100% deterministic, pure functional logic counting distinct independent reporter wallets ($K \ge 3$), filtering out custodian self-reports, detecting tampering on immutable fields, and computing a weighted score. Verified by automated unit tests (`lib/detect.test.ts`). |
-| **IPFS Photo Storage (`lib/ipfs.ts`)** | **LIVE / HYBRID** | Client-side magic-byte sniffing (JPEG/PNG/WebP), EXIF GPS stripping via HTML5 Canvas rasterization, deterministic SHA-256 CIDv1 computation, and multiple gateway fallbacks. |
-
----
-
-## 2. Environment Variables
-
-Create or edit `.env.local`:
-
-| Variable | Required | Where to Get / Purpose |
-|---|---|---|
-| `NEXT_PUBLIC_CHAIN_ID` | Yes | Default: `7738577` (Tiramisu Testnet). |
-| `NEXT_PUBLIC_RPC_URL` | Yes | Default: `https://rpc.tiramisu.db-chain.testnet.arkiv.network`. |
-| `NEXT_PUBLIC_EXPLORER_URL`| Yes | Default: `https://explorer.tiramisu.db-chain.testnet.arkiv.network`. |
-| `NEXT_PUBLIC_FAUCET_URL` | Yes | Default: `https://hub.arkiv.network/faucet`. |
-| `NEXT_PUBLIC_DEMO_MODE` | No | Set `true` for offline demo presentation. Set `false` for live chain. |
-| `NEXT_PUBLIC_ALLOW_DEMO_IN_PROD` | No | Default `false`. Set `true` only if demo mode is permitted in production builds. |
-| `SEED_PRIVATE_KEY` | For seed | Test wallet private key (never exposed to client). Fund with `$GLM` at `https://hub.arkiv.network/faucet`. |
-| `PINATA_JWT` / `NEXT_PUBLIC_IPFS_GATEWAY` | Optional | Pinata API token or IPFS gateway URL (defaults to `https://ipfs.io/ipfs/`). |
+</div>
 
 ---
 
-## 3. Exact Commands to Run
+<div align="center">
 
-```bash
-# 1. Install dependencies
-npm install
+[Live app](LIVE_URL_HERE) | [Demo video](YOUTUBE_LINK_HERE) | [Schema](/arkiv/schema.md) | [Friction report](/arkiv/friction.md)
 
-# 2. Run unit test suite (11/11 tests pass)
-npm test
+</div>
 
-# 3. Build production bundle (Next.js 15)
-npm run build
+## The problem
 
-# 4. Start production server
-npm run start
-# (Or run development server):
-npm run dev
+In public distribution programmes across India, such as rural medicine deliveries, disaster relief packets, or local water works, official records often mark supplies as delivered while communities on the ground experience shortages or damaged goods. When citizens file complaints on centralized grievance portals, records can be edited, closed, or silently deleted by administrators who control the database. Local residents and field workers bear the harm of missing supplies while official dashboards report complete success. There is no independent, tamper-proof record that preserves both the original promise and field observations side by side.
 
-# 5. Run idempotent seed script against live chain
-npm run seed
+## The solution
+
+Krix is an accountability ledger for public delivery commitments built on Arkiv. An authority publishes a delivery promise detailing item counts, destination villages, and dispatch dates. Residents and facility staff submit eyewitness reports and statements on whether supplies arrived, logging observed counts and photo proofs. The authority can publish official replies, and residents record condition verdicts. Neither side can edit or delete the other party's submissions. The interface labels official delivery states as "authority claims" and presents claims alongside resident reports so discrepancies remain permanently visible.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A[Authority] -->|civic_record & dispatch_manifest| B[(Arkiv Ledger)]
+    C[Intermediary] -->|statement| B
+    D[Citizen] -->|ground_report| B
+    A -->|authority_response| B
+    B --> E[Claims Ladder & Detection]
 ```
 
-App runs at: **`http://localhost:3000`**
+1. An authority publishes a delivery commitment, creating a mutable `civic_record` and an immutable `dispatch_manifest`.
+2. Intermediate transport or warehouse handlers submit readonly `statement` entities recording handover counts and cargo condition.
+3. Local residents and health workers submit readonly `ground_report` entries with observed counts, damage verdicts, and IPFS photo CIDs.
+4. The authority submits an immutable `authority_response` referencing a specific complaint or statement key.
+5. The authority updates delivery progress by patching whitelisted fields on `civic_record` without overwriting the genesis manifest.
+6. The client-side detection engine cross-references all claims chronologically and flags discrepancies between promised and reported numbers.
 
----
+## Built with
 
-## 4. Audit & Verification of the 13 Checklist Items
-
-| # | Item | Status | How Implemented & Verified |
-|---|---|---|---|
-| 1 | **Record Identity** | **FIXED** | Removed record ID text input from `/new`. Canonical identifier is the Arkiv entity key (`/records/[entityKey]`). URLs and reports reference canonical entity keys. Auto-generates human-readable reference codes (`KX-<KIND>-<DISTRICT>-<YEAR>-<6CHARS>`). Entity key format validated; malformed/unknown keys route cleanly to 404 page. |
-| 2 | **Immutable Fields** | **FIXED** | Companion `dispatch_manifest` entity (`readonly: true`) created at batch creation. `patchEntity` in `lib/arkiv.ts` strictly whitelists only `status`, `quantity_received`, and `notes`. Detection engine flags changes to genesis fields as high-severity `TAMPERING`. |
-| 3 | **Demo / Live Isolation** | **FIXED** | "Test Immutability" button removed from production record UI (preserved on `/how-it-works`). Persona dropdown switcher disabled in live mode; live user role is derived directly from the connected wallet. In production (`NODE_ENV=production`), demo mode is blocked unless `NEXT_PUBLIC_ALLOW_DEMO_IN_PROD=true`. |
-| 4 | **Access Control & Custody** | **FIXED** | Custodian actions (patch, handover) verify custodian ownership against the live chain right before sending. Handover verifies checksummed address, blocks zero address and self-transfer, and requires modal confirmation that handover is irreversible. State machine forbids invalid transitions and over-deliveries. |
-| 5 | **Ground Reality Report Form** | **FIXED** | Requires connected wallet. Enforces limit of 3 reports/day per wallet per record. Enforces max 3 photos. Magic bytes sniffed for JPEG/PNG/WebP. GPS coordinates stripped from EXIF before upload. Reporter role self-declared badge displayed. Reports from current custodian are flagged and excluded from cover-up detection. |
-| 6 | **Detection Engine Hardening** | **FIXED** | Counts distinct independent reporter wallets ($K \ge 3$, configured in `lib/constants.ts`). Reversals within 48h / 7,200 blocks trigger reverse timing weight. Formula and weights transparently broken down. Neutral, factual language used ("documented discrepancies", "evidence"). Unit tests cover dirty and clean records. |
-| 7 | **Performance & Limits** | **FIXED** | Paginated fetching with cursor handling (`hasNextPage()`). Polling pauses when browser tab is inactive (`visibilitychange`). Optimistic UI updates with rollback on RPC rejection. Countdown timer on entity expiration with "+30d" extension button (`permissionlessExtension`). |
-| 8 | **Quantity Reconciliation** | **FIXED** | Visual quantity reconciliation bar comparing `quantity_dispatched`, `quantity_received`, and average citizen-reported quantity. Flags shortage warning with exact difference. "Confirm Receipt" shortcut pre-fills status to DELIVERED or PARTIAL based on quantity. |
-| 9 | **IPFS & Media Handling** | **FIXED** | Magic-byte format verification (JPEG/PNG/WebP). EXIF GPS stripped via canvas rasterization. Strict CIDv0/v1 regex validation. Array of gateway fallbacks configured. |
-| 10 | **UI & Accessibility** | **FIXED** | Restrained institutional design system: system/Inter font, no gradients, no emojis, 1px border cards. Focus rings, semantic HTML elements, accessible form labels, copy buttons with toast notifications, SHA-256 evidence export. |
-| 11 | **Security & Error Handling** | **FIXED** | Content Security Policy in `next.config.js` permitting self, Tiramisu RPC, and IPFS gateways. Zod validation schema in `lib/config.ts`. Friendly error pages (`app/not-found.tsx`, `app/error.tsx`). `SEED_PRIVATE_KEY` restricted to server-side scripts. |
-| 12 | **Documentation & Hindi Support** | **FIXED** | Interactive `/how-it-works` page explaining the 3 modules with an English / Hindi toggle. |
-| 13 | **Seed Script Idempotency** | **FIXED** | `scripts/seed.ts` queries existing records by reference code before creating duplicates. Checks live `$GLM` balance and logs faucet URL. Prints transaction hashes and canonical entity key URLs for all steps. |
-
----
-
-## 5. Claims Ladder & Intermediary Statements
-
-Krix provides separate entities, validation endpoints, and workflows for each role:
-- **Citizens:** Submit eyewitness reports and complaints with photo proofs (`ground_report`, `readonly: true`, `permissionlessExtension: true`).
-- **Intermediaries / Facility Parties:** Submit operational delivery statements at `/party` and `/party/promise/[promiseKey]` (`statement`, `readonly: true`, `permissionlessExtension: true`). These include self-declared party type (`TRANSPORT`, `DISTRIBUTOR`, `FACILITY_STAFF`, `OTHER`), checkpoint location labels from the promise's village list or `"in transit"`, optional received/passed-on counts, condition (`OK`, `DAMAGED`, `EXPIRED`, `SHORT`, `DELAYED`), and up to 3 EXIF-stripped IPFS photos.
-- **Authorities:** Create delivery promises, update transit status, and publish formal readonly responses (`authority_response`) directly referencing a complaint or statement key.
-
-### Claims Ladder
-A chronological, side-by-side ledger ordered by block number that reveals discrepancies without subjective accusation:
-- **"Numbers differ":** Flags when a later statement's received count drops below an earlier count without an explanatory statement or response on record.
-- **"No statement from any party":** Flags when the authority claims a batch is delivered but zero intermediary statements and zero independent citizen reports exist.
-- **"Condition contradiction":** Flags when the authority claims delivered while statements record damage or shortage.
-- **"Delay contradiction":** Flags when a statement indicates delay after delivery was claimed.
-- **Deduplication:** Counts unique independent wallets. Reports or statements from authority wallets or repeat wallets are labelled and excluded from independent counts.
-
----
-
-## 6. What Krix Can and Cannot Prove
-
-> **Disclaimer:** *Krix shows where claims disagree. It cannot prove where goods were lost or who is responsible.*
-
-| What Krix CAN Prove | What Krix CANNOT Prove |
+| Layer | What we used |
 |---|---|
-| **Exact Chronological Sequence:** Cryptographic proof of what claim was made at what exact block number. | **Where Goods Were Lost:** Krix does not track GPS trucks or custody tokens for physical goods. |
-| **Tamper-Evidence:** Proof that an official status was altered or that citizen/intermediary claims were submitted and never deleted. | **Who Stole or Damaged Goods:** Krix does not identify culprit individuals; it records on-chain claims from pseudonymous wallets. |
-| **Mathematical & Verbal Contradiction:** Automatically flags when counts drop unexpectedly or when an official marks "Delivered" despite zero eyewitness confirmation. | **Real-World Identity:** Reporter and party roles are self-declared. Anyone can sign; Krix displays them as claims rather than verified credentials. |
+| Frontend | Next.js 15, React 19, TypeScript |
+| Wallet and Chain | Viem 2.57.7 |
+| Web3 Database SDK | @arkiv-network/sdk 0.8.1 |
+| Network | Tiramisu testnet (Chain ID 7738577) |
+| Media Storage | IPFS for photos (only CIDs stored on chain) |
+| Testing | Vitest 5.0.5 |
+| Deployment | Node.js 18+ / Next.js production build |
 
+### How Arkiv is used
+
+- Readonly entities: `dispatch_manifest`, `ground_report`, `statement`, and `authority_response` use `readonly: true` so records cannot be altered after publication.
+- Permissionless extension: Secondary entities use `permissionlessExtension: true` so anyone can extend storage lifetime using `$GLM` tokens.
+- Field whitelisting with `patchEntity`: Used only on `civic_record` to update status, received count, and notes while protecting dispatch parameters.
+- Custody succession with `changeOwnership`: Transfers on-chain write authority to successor custodian wallets while preserving historical creator wallets.
+- Historical inspection with `atBlock`: Allows queries at specific block numbers to detect retroactive status edits.
+- Attribute indexing: Uses typed attributes (`str`, `i32`, `u64`) to filter entities by type and parent promise key.
+
+See [/arkiv/schema.md](/arkiv/schema.md) for complete technical specifications.
+
+## Run it locally
+
+### Prerequisites
+
+Node.js 18 or higher, npm, and a Web3 browser wallet (such as MetaMask). Reading data from Arkiv requires no wallet. Submitting records requires a wallet with testnet `$GLM` on Tiramisu.
+
+### Setup
+
+```bash
+git clone https://github.com/Shivangi-Sharma06/krix.git
+cd krix
+npm install
+cp .env.example .env.local
+```
+
+### Environment variables
+
+| Variable | Description |
+|---|---|
+| `NEXT_PUBLIC_CHAIN_ID` | Tiramisu testnet chain ID (`7738577`). |
+| `NEXT_PUBLIC_RPC_URL` | Arkiv RPC URL (`https://rpc.tiramisu.db-chain.testnet.arkiv.network`). |
+| `NEXT_PUBLIC_EXPLORER_URL` | Arkiv block explorer URL (`https://tiramisu.explorer.arkiv.network`). |
+| `NEXT_PUBLIC_FAUCET_URL` | Arkiv testnet faucet URL (`https://hub.arkiv.network/faucet`). |
+| `NEXT_PUBLIC_DEMO_MODE` | Set to `false` for live blockchain mode, or `true` for offline simulation. |
+| `SEED_PRIVATE_KEY` | Throwaway testnet private key used by seed script. Never use real funds. |
+| `NEXT_PUBLIC_IPFS_GATEWAY` | IPFS gateway URL (defaults to `https://ipfs.io/ipfs/`). |
+| `PINATA_JWT` | Optional Pinata token for remote pinning. |
+
+Get testnet `$GLM` tokens from https://hub.arkiv.network/faucet.
+
+### Seed, test, and run
+
+```bash
+# Seed a multi-party scenario to the live testnet
+npm run seed
+
+# Run unit tests
+npm test
+
+# Run development server
+npm run dev
+
+# Run production build
+npm run build
+npm run start
+```
+
+Open http://localhost:3000 in your browser. To test both roles, connect two separate wallet accounts: the account that creates a promise is the authority, and other accounts act as citizens or intermediaries.
+
+## Project structure
+
+```text
+├── app/          # Next.js App Router routes (authority, citizen, party, records)
+├── components/   # React components (claims ladder, header, submit report modal)
+├── lib/          # Arkiv SDK client, cover-up detection, IPFS handling, types
+├── arkiv/        # Schema definition and engineering friction reports
+├── scripts/      # On-chain scenario seed script
+└── public/       # Static assets and logo
+```
+
+## Wallets and data
+
+The wallet addresses that create entities are listed in [/arkiv/wallets.md](/arkiv/wallets.md). All seed and test records use synthetic data. No personal data, passwords, or private keys are stored on chain.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

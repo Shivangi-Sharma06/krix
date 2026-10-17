@@ -1,9 +1,0 @@
-
-    Network: Tiramisu testnet, chain ID 7738577
-    HTTP RPC: https://rpc.tiramisu.db-chain.testnet.arkiv.network
-    WebSocket RPC: wss://rpc.tiramisu.db-chain.testnet.arkiv.network
-    Explorer: tiramisu.explorer.arkiv.network
-    SDK: @arkiv-network/sdk 0.8.x
-    Docs: docs.arkiv.network
-    Arkiv Hub hub.arkiv.network/
-
