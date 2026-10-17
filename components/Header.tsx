@@ -32,8 +32,35 @@ export function Header() {
   const [isScrolled, setIsScrolled] = useState(false);
   const [announcementDismissed, setAnnouncementDismissed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [navVisible, setNavVisible] = useState(!isLandingPage);
 
   const demoMode = isDemoModeActive();
+
+  useEffect(() => {
+    if (!isLandingPage) {
+      setNavVisible(true);
+      return;
+    }
+
+    const checkVisibility = () => {
+      const heroRoles = document.getElementById('hero-roles');
+      if (heroRoles) {
+        const rect = heroRoles.getBoundingClientRect();
+        // Reveal when the hero roles section enters the viewport
+        setNavVisible(rect.top <= window.innerHeight * 0.85);
+      } else {
+        setNavVisible(window.scrollY > window.innerHeight * 0.75);
+      }
+    };
+
+    checkVisibility();
+    window.addEventListener('scroll', checkVisibility, { passive: true });
+    window.addEventListener('resize', checkVisibility);
+    return () => {
+      window.removeEventListener('scroll', checkVisibility);
+      window.removeEventListener('resize', checkVisibility);
+    };
+  }, [isLandingPage]);
 
   useEffect(() => {
     let isMounted = true;
@@ -91,7 +118,10 @@ export function Header() {
         backgroundColor: isScrolled ? 'rgba(20, 19, 17, 0.95)' : 'var(--bg-app)',
         backdropFilter: isScrolled ? 'blur(10px)' : 'none',
         borderBottom: isScrolled ? '1px solid var(--border-subtle)' : '1px solid transparent',
-        transition: 'background-color 0.2s ease, border-color 0.2s ease',
+        transform: navVisible ? 'translateY(0)' : 'translateY(-100%)',
+        opacity: navVisible ? 1 : 0,
+        pointerEvents: navVisible ? 'auto' : 'none',
+        transition: 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease, background-color 0.2s ease, border-color 0.2s ease',
       }}
     >
       {/* 1. Dismissible Announcement Bar (Landing Page only) */}
@@ -190,15 +220,15 @@ export function Header() {
         style={{
           maxWidth: 'var(--container-max)',
           margin: '0 auto',
-          padding: isLandingPage ? '14px 24px' : '10px 24px',
+          padding: '10px 24px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: '16px',
         }}
       >
-        {/* Left: Logo & Brand */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+        {/* Left: Logo & Brand + Organized Roles */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
           <Link
             href="/"
             style={{
@@ -227,7 +257,7 @@ export function Header() {
             </span>
           </Link>
 
-          {/* Active Role Chip in App Shell */}
+          {/* Active Role Chip if assigned */}
           {userRole && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span
@@ -260,99 +290,113 @@ export function Header() {
                 }}
                 title="Switch between Citizen and Authority roles"
               >
-                Switch role
+                Switch
               </button>
             </div>
           )}
 
-          {/* Navigation Links (Desktop) */}
+          {/* Navigation Links: Organized Roles & Platform */}
           <nav
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '18px',
-              fontSize: '14px',
-              marginLeft: '6px',
+              gap: '14px',
+              fontSize: '13px',
+              marginLeft: '4px',
             }}
             className="nav-desktop"
           >
-            {isLandingPage ? (
-              <>
-                <a href="#product" style={{ color: 'var(--text-muted)' }}>
-                  Product
-                </a>
-                <a href="#who-its-for" style={{ color: 'var(--text-muted)' }}>
-                  Who it&apos;s for
-                </a>
-                <Link href="/how-it-works" style={{ color: 'var(--text-muted)' }}>
-                  How it works
-                </Link>
-                <Link href="/records" style={{ color: 'var(--text-muted)' }}>
-                  Records
-                </Link>
-                <a href="#faq" style={{ color: 'var(--text-muted)' }}>
-                  FAQ
-                </a>
-              </>
-            ) : (
-              <>
-                <Link
-                  href="/citizen"
-                  style={{
-                    color: pathname.startsWith('/citizen') ? 'var(--text-main)' : 'var(--text-muted)',
-                    fontWeight: pathname.startsWith('/citizen') ? 600 : 400,
-                  }}
-                >
-                  Citizen
-                </Link>
-                <Link
-                  href="/party"
-                  style={{
-                    color: pathname.startsWith('/party') ? 'var(--text-main)' : 'var(--text-muted)',
-                    fontWeight: pathname.startsWith('/party') ? 600 : 400,
-                  }}
-                >
-                  Statements
-                </Link>
-                <Link
-                  href="/authority"
-                  style={{
-                    color: pathname.startsWith('/authority') ? 'var(--text-main)' : 'var(--text-muted)',
-                    fontWeight: pathname.startsWith('/authority') ? 600 : 400,
-                  }}
-                >
-                  Authority
-                </Link>
-                <Link
-                  href="/records"
-                  style={{
-                    color: pathname === '/records' ? 'var(--text-main)' : 'var(--text-muted)',
-                    fontWeight: pathname === '/records' ? 600 : 400,
-                  }}
-                >
-                  Records
-                </Link>
-                {userRole === 'authority' && (
-                  <Link
-                    href="/new"
-                    style={{
-                      color: pathname === '/new' ? 'var(--text-main)' : 'var(--text-muted)',
-                      fontWeight: pathname === '/new' ? 600 : 400,
-                    }}
-                  >
-                    + New Promise
-                  </Link>
-                )}
-                <Link
-                  href="/how-it-works"
-                  style={{
-                    color: pathname === '/how-it-works' ? 'var(--text-main)' : 'var(--text-muted)',
-                    fontWeight: pathname === '/how-it-works' ? 600 : 400,
-                  }}
-                >
-                  How It Works
-                </Link>
-              </>
+            {/* Roles Segmented Group */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                backgroundColor: 'rgba(255, 255, 255, 0.04)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: '8px',
+                padding: '2px 3px',
+                gap: '2px',
+              }}
+            >
+              <Link
+                href="/citizen"
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  color: pathname.startsWith('/citizen') ? 'var(--text-main)' : 'var(--text-muted)',
+                  backgroundColor: pathname.startsWith('/citizen') ? 'var(--bg-surface-raised)' : 'transparent',
+                  fontWeight: pathname.startsWith('/citizen') ? 600 : 500,
+                  textDecoration: 'none',
+                  transition: 'color 0.15s, background-color 0.15s',
+                }}
+              >
+                Citizen
+              </Link>
+              <Link
+                href="/party"
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  color: pathname.startsWith('/party') ? 'var(--text-main)' : 'var(--text-muted)',
+                  backgroundColor: pathname.startsWith('/party') ? 'var(--bg-surface-raised)' : 'transparent',
+                  fontWeight: pathname.startsWith('/party') ? 600 : 500,
+                  textDecoration: 'none',
+                  transition: 'color 0.15s, background-color 0.15s',
+                }}
+              >
+                Statements
+              </Link>
+              <Link
+                href="/authority"
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  color: pathname.startsWith('/authority') ? 'var(--text-main)' : 'var(--text-muted)',
+                  backgroundColor: pathname.startsWith('/authority') ? 'var(--bg-surface-raised)' : 'transparent',
+                  fontWeight: pathname.startsWith('/authority') ? 600 : 500,
+                  textDecoration: 'none',
+                  transition: 'color 0.15s, background-color 0.15s',
+                }}
+              >
+                Authority
+              </Link>
+            </div>
+
+            <div style={{ width: '1px', height: '18px', backgroundColor: 'var(--border-subtle)', margin: '0 2px' }} />
+
+            {/* Platform / Ledger Links */}
+            <Link
+              href="/records"
+              style={{
+                color: pathname === '/records' ? 'var(--text-main)' : 'var(--text-muted)',
+                fontWeight: pathname === '/records' ? 600 : 400,
+                textDecoration: 'none',
+              }}
+            >
+              Records
+            </Link>
+            <Link
+              href="/how-it-works"
+              style={{
+                color: pathname === '/how-it-works' ? 'var(--text-main)' : 'var(--text-muted)',
+                fontWeight: pathname === '/how-it-works' ? 600 : 400,
+                textDecoration: 'none',
+              }}
+            >
+              How It Works
+            </Link>
+
+            {userRole === 'authority' && (
+              <Link
+                href="/new"
+                style={{
+                  color: pathname === '/new' ? 'var(--accent)' : 'var(--text-muted)',
+                  fontWeight: 600,
+                  textDecoration: 'none',
+                }}
+              >
+                + New Promise
+              </Link>
             )}
           </nav>
         </div>
@@ -397,86 +441,64 @@ export function Header() {
             </span>
           </div>
 
-          {/* Landing page role CTAs (Remove generic Open app) */}
-          {isLandingPage ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Link
-                href="/citizen"
-                className="btn btn-secondary btn-md"
-                style={{ fontSize: '13px', height: '32px', padding: '0 12px' }}
-              >
-                Citizen
-              </Link>
-              <Link
-                href="/authority"
-                className="btn btn-primary btn-md"
-                style={{ fontSize: '13px', height: '32px', padding: '0 12px' }}
-              >
-                Authority
-              </Link>
+          {/* Faucet link & balance (when connected) */}
+          {balanceGlm !== null && (
+            <div style={{ fontSize: '13px', color: 'var(--text-muted)' }} className="mono">
+              {parseFloat(balanceGlm).toFixed(3)} $GLM
             </div>
+          )}
+
+          <a
+            href={FAUCET_URL}
+            target="_blank"
+            rel="noreferrer"
+            style={{ fontSize: '12px', color: 'var(--text-faint)', textDecoration: 'none' }}
+          >
+            Faucet
+          </a>
+
+          {/* Demo Persona Switcher (Only if active) */}
+          {showDemoSwitcher && (
+            <select
+              value={activeDemoWallet?.address || ''}
+              onChange={(e) => {
+                const match = PRESET_WALLETS.find((w) => w.address.toLowerCase() === e.target.value.toLowerCase());
+                if (match) switchDemoWallet(match);
+              }}
+              style={{
+                fontSize: '12px',
+                padding: '4px 8px',
+                height: '32px',
+                backgroundColor: 'var(--bg-surface-raised)',
+                borderColor: 'var(--border-strong)',
+              }}
+            >
+              {PRESET_WALLETS.map((w) => (
+                <option key={w.address} value={w.address}>
+                  {w.role} ({w.name.slice(0, 16)}...)
+                </option>
+              ))}
+            </select>
+          )}
+
+          {/* Wallet Connect / Disconnect */}
+          {isConnected ? (
+            <button
+              onClick={disconnect}
+              className="btn btn-secondary btn-md mono"
+              title="Click to disconnect"
+              style={{ fontSize: '12px', height: '32px' }}
+            >
+              {address ? `${address.slice(0, 6)}...${address.slice(-4)}` : 'Connected'}
+            </button>
           ) : (
-            <>
-              {/* App page: Faucet link & balance */}
-              {balanceGlm !== null && (
-                <div style={{ fontSize: '13px', color: 'var(--text-muted)' }} className="mono">
-                  {parseFloat(balanceGlm).toFixed(3)} $GLM
-                </div>
-              )}
-
-              <a
-                href={FAUCET_URL}
-                target="_blank"
-                rel="noreferrer"
-                style={{ fontSize: '12px', color: 'var(--text-faint)' }}
-              >
-                Faucet
-              </a>
-
-              {/* Demo Persona Switcher (Only if active) */}
-              {showDemoSwitcher && (
-                <select
-                  value={activeDemoWallet?.address || ''}
-                  onChange={(e) => {
-                    const match = PRESET_WALLETS.find((w) => w.address.toLowerCase() === e.target.value.toLowerCase());
-                    if (match) switchDemoWallet(match);
-                  }}
-                  style={{
-                    fontSize: '12px',
-                    padding: '4px 8px',
-                    height: '32px',
-                    backgroundColor: 'var(--bg-surface-raised)',
-                    borderColor: 'var(--border-strong)',
-                  }}
-                >
-                  {PRESET_WALLETS.map((w) => (
-                    <option key={w.address} value={w.address}>
-                      {w.role} ({w.name.slice(0, 16)}...)
-                    </option>
-                  ))}
-                </select>
-              )}
-
-              {/* Wallet Connect / Disconnect */}
-              {isConnected ? (
-                <button
-                  onClick={disconnect}
-                  className="btn btn-secondary btn-md mono"
-                  title="Click to disconnect"
-                  style={{ fontSize: '12px', height: '32px' }}
-                >
-                  {address ? `${address.slice(0, 6)}...${address.slice(-4)}` : 'Connected'}
-                </button>
-              ) : (
-                <button
-                  onClick={connectMetaMask}
-                  className="btn btn-primary btn-md"
-                  style={{ fontSize: '13px', height: '32px' }}
-                >
-                  Connect Wallet
-                </button>
-              )}
-            </>
+            <button
+              onClick={connectMetaMask}
+              className="btn btn-primary btn-md"
+              style={{ fontSize: '13px', height: '32px' }}
+            >
+              Connect Wallet
+            </button>
           )}
         </div>
       </div>
