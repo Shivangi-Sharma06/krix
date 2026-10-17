@@ -5,7 +5,9 @@ import type {
   CoverUpDetectionResult,
   CoverUpEvidence,
   GroundReportVerdict,
+  DispatchManifestPayload,
 } from './types';
+import { DETECTION_CONFIG } from './constants';
 
 export interface DetectionInputReport {
   key?: string;
@@ -17,9 +19,11 @@ export interface DetectionInputReport {
 
 export interface DetectionInput {
   currentRecord: CivicRecordPayload;
+  manifest?: DispatchManifestPayload | null;
   revisions: RecordRevision[];
   reports: DetectionInputReport[];
-  defaultThresholdK?: number;
+  custodianWallets?: string[];
+  thresholdK?: number;
 }
 
 const NEGATIVE_VERDICTS: GroundReportVerdict[] = [
@@ -32,30 +36,103 @@ const NEGATIVE_VERDICTS: GroundReportVerdict[] = [
 const POSITIVE_STATUSES = ['DELIVERED', 'ALL_GOOD_DELIVERED'];
 
 /**
- * Pure, deterministic cover-up detection algorithm implementing PRD FR-C4, FR-C6, and FR-C7.
+ * Pure, deterministic detection engine incorporating:
+ * 1. Independent reporter deduplication (same wallet only counts once toward K)
+ * 2. Custodian report exclusion (reports from past/current custodians are marked and excluded from K)
+ * 3. Manifest tampering detection (flagging modifications to immutable fields)
+ * 4. Quantity reconciliation check
+ * 5. Neutral non-accusatory language
  */
 export function detectCoverUp(input: DetectionInput): CoverUpDetectionResult {
-  const { currentRecord, revisions, reports, defaultThresholdK = 3 } = input;
+  const {
+    currentRecord,
+    manifest,
+    revisions,
+    reports,
+    custodianWallets = [],
+    thresholdK = DETECTION_CONFIG.INDEPENDENT_REPORTER_THRESHOLD_K,
+  } = input;
 
-  const negativeReports = reports.filter((r) =>
-    NEGATIVE_VERDICTS.includes(r.payload.verdict)
-  );
+  const normalizedCustodians = new Set(custodianWallets.map((w) => w.toLowerCase()));
 
+  // 1. Filter negative reports and identify independent non-custodian reporters
+  const negativeReports = reports.filter((r) => NEGATIVE_VERDICTS.includes(r.payload.verdict));
+
+  const independentReporterWallets = new Set<string>();
+  const independentReports: DetectionInputReport[] = [];
+  const custodianNegativeReports: DetectionInputReport[] = [];
+
+  for (const rep of negativeReports) {
+    const reporterLower = rep.creator.toLowerCase();
+    const isCustodian = normalizedCustodians.has(reporterLower);
+
+    if (isCustodian) {
+      custodianNegativeReports.push(rep);
+    } else {
+      if (!independentReporterWallets.has(reporterLower)) {
+        independentReporterWallets.add(reporterLower);
+      }
+      independentReports.push(rep);
+    }
+  }
+
+  const distinctIndependentCount = independentReporterWallets.size;
   const evidences: CoverUpEvidence[] = [];
+
   let statusReversalCount = 0;
   let reverseTimingFlag = false;
+  let hasTampering = false;
 
-  // Track state transitions through ordered revisions
-  const sortedRevisions = [...revisions].sort((a, b) => {
-    if (a.blockNumber === b.blockNumber) return 0;
-    return a.blockNumber < b.blockNumber ? -1 : 1;
-  });
+  // 2. Check for Tampering against Dispatch Manifest (Item 2)
+  if (manifest) {
+    const tamperedFields: string[] = [];
+    if (currentRecord.kind !== manifest.kind) tamperedFields.push('kind');
+    if (currentRecord.quantity_dispatched !== manifest.quantity_dispatched) tamperedFields.push('quantity_dispatched');
+    if (currentRecord.origin !== manifest.origin) tamperedFields.push('origin');
+    if (currentRecord.destination !== manifest.destination) tamperedFields.push('destination');
+    if (manifest.expiry_date && currentRecord.expiry_date !== manifest.expiry_date) {
+      tamperedFields.push('expiry_date');
+    }
 
+    if (tamperedFields.length > 0) {
+      hasTampering = true;
+      evidences.push({
+        ruleId: 'TAMPERING_MANIFEST_DISCREPANCY',
+        findingType: 'TAMPERING',
+        description: `Immutable manifest discrepancy: Current record fields [${tamperedFields.join(', ')}] differ from the original dispatch manifest.`,
+        suspiciousEditBlock: revisions[revisions.length - 1]?.blockNumber || 0n,
+        suspiciousEditTxHash: revisions[revisions.length - 1]?.txHash || '0x',
+        custodianWallet: revisions[revisions.length - 1]?.updater || 'Unknown',
+        tamperedFields,
+        contradictingReports: [],
+      });
+    }
+  }
+
+  // 3. Inspect historical revisions for status flips & unauthorized field changes
+  const sortedRevisions = [...revisions].sort((a, b) => (a.blockNumber < b.blockNumber ? -1 : 1));
   let prevStatus: string | undefined = undefined;
+  let prevDispatched: number | undefined = undefined;
 
-  for (let i = 0; i < sortedRevisions.length; i++) {
-    const rev = sortedRevisions[i];
+  for (const rev of sortedRevisions) {
     const newStatus = rev.status || rev.rawPayload?.status;
+    const newDispatched = rev.rawPayload?.quantity_dispatched;
+
+    // Check if quantity_dispatched was altered in a patch revision
+    if (prevDispatched !== undefined && newDispatched !== undefined && newDispatched !== prevDispatched) {
+      hasTampering = true;
+      evidences.push({
+        ruleId: 'TAMPERING_DISPATCH_QUANTITY_ALTERED',
+        findingType: 'TAMPERING',
+        description: `Quantity dispatched was modified on-chain at block #${rev.blockNumber.toString()} from ${prevDispatched} to ${newDispatched}.`,
+        suspiciousEditBlock: rev.blockNumber,
+        suspiciousEditTxHash: rev.txHash,
+        custodianWallet: rev.updater,
+        tamperedFields: ['quantity_dispatched'],
+        contradictingReports: [],
+      });
+    }
+    if (newDispatched !== undefined) prevDispatched = newDispatched;
 
     if (newStatus && prevStatus && newStatus !== prevStatus) {
       const isFlippingToPositive =
@@ -64,17 +141,18 @@ export function detectCoverUp(input: DetectionInput): CoverUpDetectionResult {
       if (isFlippingToPositive) {
         statusReversalCount++;
 
-        // Rule 1: Flipped to positive while >= K negative reports exist
-        if (negativeReports.length >= defaultThresholdK) {
+        // Rule 1: Flipped to positive while >= K independent reporters filed negative reports
+        if (distinctIndependentCount >= thresholdK) {
           evidences.push({
-            ruleId: 'RULE_1_STATUS_FLIP_WITH_NEGATIVE_REPORTS',
-            description: `At block #${rev.blockNumber.toString()}, custodian ${rev.updater} changed status from ${prevStatus} to ${newStatus}, while ${negativeReports.length} immutable citizen reports say ${negativeReports.map((nr) => nr.payload.verdict).join(', ')}.`,
+            ruleId: 'COVER_UP_STATUS_FLIP_CONTRADICTED',
+            findingType: 'COVER_UP',
+            description: `At block #${rev.blockNumber.toString()}, status was updated from ${prevStatus} to ${newStatus}, while ${distinctIndependentCount} independent citizen report(s) contradict the recorded status.`,
             suspiciousEditBlock: rev.blockNumber,
             suspiciousEditTxHash: rev.txHash,
             custodianWallet: rev.updater,
             oldStatus: prevStatus,
             newStatus: newStatus,
-            contradictingReports: negativeReports.map((nr) => ({
+            contradictingReports: independentReports.map((nr) => ({
               reportKey: nr.key,
               blockNumber: nr.blockNumber,
               txHash: nr.txHash,
@@ -83,26 +161,26 @@ export function detectCoverUp(input: DetectionInput): CoverUpDetectionResult {
               severity: nr.payload.severity,
               description: nr.payload.description,
               photo_cids: nr.payload.photo_cids || [],
+              is_custodian_submission: false,
             })),
           });
         }
 
         // Rule 2: Reverse-Timing Contradiction
-        // Status changed to positive AFTER at least one negative report was already filed
-        const reportsPriorToEdit = negativeReports.filter(
+        const reportsPriorToEdit = independentReports.filter(
           (nr) => nr.blockNumber <= rev.blockNumber
         );
 
         if (reportsPriorToEdit.length > 0) {
           reverseTimingFlag = true;
-          // Avoid duplicate evidence if rule 1 already added it for same edit
           const alreadyAdded = evidences.some(
-            (e) => e.suspiciousEditBlock === rev.blockNumber
+            (e) => e.suspiciousEditBlock === rev.blockNumber && e.ruleId.startsWith('COVER_UP')
           );
           if (!alreadyAdded) {
             evidences.push({
-              ruleId: 'RULE_2_REVERSE_TIMING_CONTRADICTION',
-              description: `Reverse-timing contradiction: status changed to ${newStatus} at block #${rev.blockNumber.toString()} after ${reportsPriorToEdit.length} ground report(s) had already documented failures.`,
+              ruleId: 'COVER_UP_REVERSE_TIMING_CONTRADICTION',
+              findingType: 'COVER_UP',
+              description: `Status was updated to ${newStatus} at block #${rev.blockNumber.toString()} after ${reportsPriorToEdit.length} independent report(s) had already documented failures.`,
               suspiciousEditBlock: rev.blockNumber,
               suspiciousEditTxHash: rev.txHash,
               custodianWallet: rev.updater,
@@ -117,6 +195,7 @@ export function detectCoverUp(input: DetectionInput): CoverUpDetectionResult {
                 severity: nr.payload.severity,
                 description: nr.payload.description,
                 photo_cids: nr.payload.photo_cids || [],
+                is_custodian_submission: false,
               })),
             });
           }
@@ -124,27 +203,26 @@ export function detectCoverUp(input: DetectionInput): CoverUpDetectionResult {
       }
     }
 
-    if (newStatus) {
-      prevStatus = newStatus;
-    }
+    if (newStatus) prevStatus = newStatus;
   }
 
-  // Also check if current status is positive while >= K negative reports exist, even if single revision
+  // Check current status if single revision with >= K independent reports
   if (
     POSITIVE_STATUSES.includes(currentRecord.status) &&
-    negativeReports.length >= defaultThresholdK &&
-    evidences.length === 0
+    distinctIndependentCount >= thresholdK &&
+    !evidences.some((e) => e.findingType === 'COVER_UP')
   ) {
     const latestRev = sortedRevisions[sortedRevisions.length - 1];
     evidences.push({
-      ruleId: 'RULE_1_CURRENT_POSITIVE_STATUS_CONTRADICTION',
-      description: `Official record status is ${currentRecord.status}, directly contradicting ${negativeReports.length} ground reality reports.`,
+      ruleId: 'COVER_UP_CURRENT_STATUS_CONTRADICTION',
+      findingType: 'COVER_UP',
+      description: `Official record status is recorded as ${currentRecord.status}, which contradicts ${distinctIndependentCount} independent ground reality reports.`,
       suspiciousEditBlock: latestRev ? latestRev.blockNumber : 0n,
       suspiciousEditTxHash: latestRev ? latestRev.txHash : '0x',
       custodianWallet: latestRev ? latestRev.updater : 'Unknown',
       oldStatus: 'PREVIOUS',
       newStatus: currentRecord.status,
-      contradictingReports: negativeReports.map((nr) => ({
+      contradictingReports: independentReports.map((nr) => ({
         reportKey: nr.key,
         blockNumber: nr.blockNumber,
         txHash: nr.txHash,
@@ -153,12 +231,12 @@ export function detectCoverUp(input: DetectionInput): CoverUpDetectionResult {
         severity: nr.payload.severity,
         description: nr.payload.description,
         photo_cids: nr.payload.photo_cids || [],
+        is_custodian_submission: false,
       })),
     });
   }
 
-  // Rule 3: Quantity reconciliation check (FR-C6)
-  // Flag when quantity_received > dispatched, or unexplained gap with reports
+  // 4. Quantity Reconciliation Check
   const quantityDispatched = currentRecord.quantity_dispatched || 0;
   const quantityReceived = currentRecord.quantity_received || 0;
   let quantityGap = 0;
@@ -166,8 +244,9 @@ export function detectCoverUp(input: DetectionInput): CoverUpDetectionResult {
   if (quantityReceived > quantityDispatched && quantityDispatched > 0) {
     quantityGap = quantityReceived - quantityDispatched;
     evidences.push({
-      ruleId: 'RULE_3_INFLATED_QUANTITY',
-      description: `Quantity reconciliation mismatch: Claimed received (${quantityReceived}) exceeds total dispatched (${quantityDispatched}).`,
+      ruleId: 'RECONCILIATION_CLAIMED_EXCEEDS_DISPATCHED',
+      findingType: 'COVER_UP',
+      description: `Reconciliation discrepancy: Claimed received (${quantityReceived}) exceeds dispatched quantity (${quantityDispatched}).`,
       suspiciousEditBlock: sortedRevisions[sortedRevisions.length - 1]?.blockNumber || 0n,
       suspiciousEditTxHash: sortedRevisions[sortedRevisions.length - 1]?.txHash || '0x',
       custodianWallet: sortedRevisions[sortedRevisions.length - 1]?.updater || 'Unknown',
@@ -176,57 +255,64 @@ export function detectCoverUp(input: DetectionInput): CoverUpDetectionResult {
     });
   }
 
-  // FR-C7: Cover-up score (0–100)
-  // Formula weights:
-  // - Contradicting reports count (up to 30 pts)
-  // - Average severity (1-10 -> up to 25 pts)
-  // - Status reversals (up to 25 pts)
-  // - Reverse timing contradiction (10 pts)
-  // - Quantity gap (10 pts)
-  const reportCountWeight = Math.min(30, negativeReports.length * 10);
+  // 5. Score Calculation using Constants
+  const reporterWeight = Math.min(
+    DETECTION_CONFIG.WEIGHTS.INDEPENDENT_REPORTERS_MAX,
+    distinctIndependentCount * 10
+  );
 
   const avgSeverity =
-    negativeReports.length > 0
-      ? negativeReports.reduce((acc, r) => acc + (r.payload.severity || 0), 0) /
-        negativeReports.length
+    independentReports.length > 0
+      ? independentReports.reduce((acc, r) => acc + (r.payload.severity || 0), 0) /
+        independentReports.length
       : 0;
-  const severityWeight = Math.min(25, Math.round((avgSeverity / 10) * 25));
+  const severityWeight = Math.min(
+    DETECTION_CONFIG.WEIGHTS.AVERAGE_SEVERITY_MAX,
+    Math.round((avgSeverity / 10) * DETECTION_CONFIG.WEIGHTS.AVERAGE_SEVERITY_MAX)
+  );
 
-  const reversalWeight = Math.min(25, statusReversalCount * 25);
-  const timingWeight = reverseTimingFlag ? 10 : 0;
-  const gapWeight = quantityGap > 0 ? 10 : 0;
+  const reversalWeight = Math.min(
+    DETECTION_CONFIG.WEIGHTS.STATUS_REVERSAL_MAX,
+    statusReversalCount * 25
+  );
+  const timingWeight = reverseTimingFlag ? DETECTION_CONFIG.WEIGHTS.REVERSE_TIMING_MAX : 0;
+  const gapWeight = quantityGap > 0 ? DETECTION_CONFIG.WEIGHTS.QUANTITY_GAP_MAX : 0;
+  const tamperingWeight = hasTampering ? DETECTION_CONFIG.WEIGHTS.TAMPERING_MAX : 0;
 
   const totalScore = Math.min(
     100,
-    reportCountWeight + severityWeight + reversalWeight + timingWeight + gapWeight
+    reporterWeight + severityWeight + reversalWeight + timingWeight + gapWeight + tamperingWeight
   );
 
-  const isCoverUp = evidences.length > 0 || totalScore >= 50;
+  // A cover-up finding requires at least thresholdK independent reporters OR explicit quantity manipulation
+  const hasCoverUpEvidence = evidences.some((e) => e.findingType === 'COVER_UP');
+  const isCoverUp = (hasCoverUpEvidence && distinctIndependentCount >= thresholdK) || (quantityGap > 0);
 
   let alertMessage: string | undefined;
   if (isCoverUp && evidences.length > 0) {
-    const primary = evidences[0];
-    alertMessage = `ALERT: At block #${primary.suspiciousEditBlock.toString()}, wallet ${primary.custodianWallet.slice(
-      0,
-      6
-    )}...${primary.custodianWallet.slice(-4)} changed status from ${primary.oldStatus || 'DAMAGED'} to ${
-      primary.newStatus || currentRecord.status
-    }, while ${primary.contradictingReports.length} immutable citizen reports say ${
-      primary.contradictingReports[0]?.verdict || 'DAMAGED'
-    }.`;
+    const primary = evidences.find((e) => e.findingType === 'COVER_UP') || evidences[0];
+    alertMessage = `ALERT: At block #${primary.suspiciousEditBlock.toString()}, status was changed from ${
+      primary.oldStatus || 'DAMAGED'
+    } to ${primary.newStatus || currentRecord.status}, while ${
+      primary.contradictingReports.length
+    } independent citizen report(s) contradict the recorded status.`;
+  } else if (hasTampering) {
+    alertMessage = `ALERT: Tampering detected: Core parameters differ from original immutable manifest.`;
   }
 
   return {
     isCoverUp,
+    hasTampering,
     score: totalScore,
     scoreBreakdown: {
-      contradictingReportsWeight: reportCountWeight,
+      independentReportersWeight: reporterWeight,
       averageSeverityWeight: severityWeight,
       statusReversalWeight: reversalWeight,
       reverseTimingWeight: timingWeight,
       quantityGapWeight: gapWeight,
+      tamperingWeight,
       formula:
-        'Score (0-100) = Contradicting Reports (max 30) + Avg Severity (max 25) + Status Reversals (max 25) + Reverse Timing (max 10) + Quantity Gap (max 10)',
+        'Score (0-100) = Independent Reporters (max 30) + Avg Severity (max 25) + Status Reversals (max 25) + Reverse Timing (max 10) + Quantity Gap (max 10) + Tampering (max 40)',
     },
     alertMessage,
     evidences,

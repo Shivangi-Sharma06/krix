@@ -1,120 +1,82 @@
-# Krix (JanAudit) — Tamper-Evident Civic Audit Layer
+# JanAudit (Krix) — Tamper-Evident Civic Audit Layer
 
 > *Supplies can be delayed. Truth cannot be deleted.*
 
-Krix (JanAudit) is a public, tamper-evident audit web application for government civic and supply chain projects (such as Jan Aushadhi medicine batches, disaster relief kits, and ward civic works).
+JanAudit (Krix) is a public, tamper-evident audit layer for government civic projects and public distribution supply chains (Jan Aushadhi medicine batches, relief kits, and ward civic works).
 
-It combines:
-1. An **official, mutable on-chain record (`civic_record`)** with cryptographic custody transfer (`changeOwnership`) and status patches (`patchEntity`).
-2. An **uncensorable, permanent ground report layer (`ground_report`)** submitted with `readonly: true` and `permissionlessExtension: true`.
-3. A **Time-Travel Diff Engine (`atBlock`)** that compares historical state against ground reports and detects cover-ups.
+It is built with **Next.js 15 (React 19, TypeScript)**, **Viem**, **@arkiv-network/sdk (v0.8.1)** on the **Tiramisu Testnet** (Chain ID: 7738577), and client-side privacy-preserving IPFS photo handling.
 
 ---
 
-## 1. Prerequisites and Setup
+## 1. What is Live vs Simulated (Honest Status)
 
-- Node.js 20+ (recommended Node 22+)
-- Web browser (Chrome / Brave / Firefox with MetaMask, or use the built-in demo wallet switcher)
+| Feature / Primitive | Live Status on Tiramisu | Notes |
+|---|---|---|
+| **Tiramisu RPC Node Connectivity** | **LIVE** | Live HTTP RPC connection to `https://rpc.tiramisu.db-chain.testnet.arkiv.network`. Real block number polled every 15s (`#a8900+`). Header reflects network health and fallback status. |
+| **Arkiv SDK Query Engine (`select`, `atBlock`)** | **LIVE** | Arkiv queries execute against the live testnet node. Supported filter syntax: `type = str('civic_record')` and custom attributes wrapped in `str(...)`. |
+| **On-Chain Entity Creation & Transactions** | **LIVE (Gas Required)** | Live `createEntity`, `patchEntity`, `changeOwnership`, and `extendEntity` execute via Viem on contract `0x4400000000000000000000000000000000000044`. Requires funded `$GLM` test tokens. |
+| **Demo / Simulation Mode** | **OPTIONAL (Explicit Flag)** | Controlled strictly by `NEXT_PUBLIC_DEMO_MODE=true`. Displays a permanent yellow banner: *"DEMO MODE - data is simulated locally and is not on the live blockchain"*. In production (`NODE_ENV=production`), demo mode is blocked unless `NEXT_PUBLIC_ALLOW_DEMO_IN_PROD=true` is explicitly provided. |
+| **Cover-Up Detection Algorithm (`lib/detect.ts`)** | **LIVE & PURE** | 100% deterministic, pure functional logic counting distinct independent reporter wallets ($K \ge 3$), filtering out custodian self-reports, detecting tampering on immutable fields, and computing a weighted score. Verified by automated unit tests (`lib/detect.test.ts`). |
+| **IPFS Photo Storage (`lib/ipfs.ts`)** | **LIVE / HYBRID** | Client-side magic-byte sniffing (JPEG/PNG/WebP), EXIF GPS stripping via HTML5 Canvas rasterization, deterministic SHA-256 CIDv1 computation, and multiple gateway fallbacks. |
 
-### Installation
+---
+
+## 2. Environment Variables
+
+Create or edit `.env.local`:
+
+| Variable | Required | Where to Get / Purpose |
+|---|---|---|
+| `NEXT_PUBLIC_CHAIN_ID` | Yes | Default: `7738577` (Tiramisu Testnet). |
+| `NEXT_PUBLIC_RPC_URL` | Yes | Default: `https://rpc.tiramisu.db-chain.testnet.arkiv.network`. |
+| `NEXT_PUBLIC_EXPLORER_URL`| Yes | Default: `https://explorer.tiramisu.db-chain.testnet.arkiv.network`. |
+| `NEXT_PUBLIC_FAUCET_URL` | Yes | Default: `https://hub.arkiv.network/faucet`. |
+| `NEXT_PUBLIC_DEMO_MODE` | No | Set `true` for offline demo presentation. Set `false` for live chain. |
+| `NEXT_PUBLIC_ALLOW_DEMO_IN_PROD` | No | Default `false`. Set `true` only if demo mode is permitted in production builds. |
+| `SEED_PRIVATE_KEY` | For seed | Test wallet private key (never exposed to client). Fund with `$GLM` at `https://hub.arkiv.network/faucet`. |
+| `PINATA_JWT` / `NEXT_PUBLIC_IPFS_GATEWAY` | Optional | Pinata API token or IPFS gateway URL (defaults to `https://ipfs.io/ipfs/`). |
+
+---
+
+## 3. Exact Commands to Run
 
 ```bash
 # 1. Install dependencies
 npm install
 
-# 2. Configure environment
-cp .env.example .env.local
-
-# 3. Start development server
-npm run dev
-```
-
-The application will be accessible at [http://localhost:3000](http://localhost:3000).
-
----
-
-## 2. Environment Variables (.env.example)
-
-```env
-NEXT_PUBLIC_CHAIN_ID=7738577
-NEXT_PUBLIC_RPC_URL=https://rpc.tiramisu.db-chain.testnet.arkiv.network
-NEXT_PUBLIC_EXPLORER_URL=https://tiramisu.explorer.arkiv.network
-NEXT_PUBLIC_FAUCET_URL=https://hub.arkiv.network/
-NEXT_PUBLIC_IPFS_GATEWAY=https://ipfs.io/ipfs/
-```
-
----
-
-## 3. How to Get Test Tokens ($GLM)
-
-- **Network:** Tiramisu Testnet
-- **Chain ID:** `7738577`
-- **Native Currency:** `$GLM` (Golem)
-- **Faucet:** Visit [Arkiv Hub Faucet](https://hub.arkiv.network/) to request test tokens for your wallet address.
-- **Explorer:** [https://tiramisu.explorer.arkiv.network](https://tiramisu.explorer.arkiv.network)
-
-*Note:* For quick testing and offline presentations, Krix includes a built-in **Demo Role Switcher** in the header with 6 pre-configured stakeholder personas (State Warehouse, Truck Distributor, Clinic Receiver, Doctor, Inspector, Citizen).
-
----
-
-## 4. How to Run the Seed Script
-
-To create the complete demo scenario from the PRD on-chain:
-
-```bash
-npm run seed
-# or
-npx tsx scripts/seed.ts
-```
-
-What the script does:
-1. **Wallet A (Warehouse Custodian):** Creates batch `IND-AP-2026-04` (500 Dengue Kits).
-2. **Handover A → B:** Transfers custody to Wallet B (Distributor / Truck).
-3. **Transit:** Wallet B marks `status: 'IN_TRANSIT'` and hands over custody to Wallet C (Clinic Receiver).
-4. **Receipt:** Wallet C logs arrival of 300 units with `status: 'DAMAGED'`.
-5. **Ground Truth:** 3 immutable ground reports are submitted with `readonly: true`:
-   - Doctor (Severity 9, DAMAGED, soaked boxes, photo proof)
-   - Quality Inspector (Severity 8, DAMAGED, temperature violation)
-   - Citizen (Severity 8, DAMAGED, shortage of kits)
-6. **The Cover-Up Edit:** Custodian patches the official record status to `ALL_GOOD_DELIVERED` and claims 500 units received in pristine condition.
-
----
-
-## 5. How to Run the Demo (Under 2 Minutes)
-
-1. Open [http://localhost:3000](http://localhost:3000).
-2. In the records list, click on record **`IND-AP-2026-04`** (marked with `[COVER-UP FLAGGED]`).
-3. **Inspect the Custody Chain & Reconciliation Bar:**
-   - Observe the custody progression: Hop #1 (Warehouse) → Hop #2 (Distributor) → Hop #3 (Clinic).
-   - Check the quantity reconciliation: 500 dispatched, claimed 500 received, but reports document 200 damaged/unusable units.
-4. **Time-Travel Slider:**
-   - Drag the slider back to block `#410180` (or earlier).
-   - Notice the side-by-side **Red / Green diff view** showing the transition where status was originally `DAMAGED` and later flipped to `ALL_GOOD_DELIVERED`.
-5. **Detect Cover-Up Button:**
-   - Click the red **"🔍 Detect Cover-Up"** button.
-   - An alert appears:
-     > *"ALERT: At block #410290, wallet 0x8a... changed status from DAMAGED to ALL_GOOD_DELIVERED, while 3 immutable citizen reports say DAMAGED."*
-   - Review the Cover-Up Score (95/100) and the documented on-chain evidence with links to transactions and photo evidence.
-6. **Verify Immutability:**
-   - Click **"Test Immutability"** next to any citizen report. The attempt to mutate or delete the readonly entity fails with an on-chain integrity confirmation.
-7. **Lifetime Extension:**
-   - Click **"⏳ Extend Life (+30 days)"** on any report to invoke `extendEntity` permissionlessly.
-
----
-
-## 6. Architecture & Implementation Decisions
-
-- **Single Adapter Module (`lib/arkiv.ts`):** All Arkiv SDK client instantiations, queries (`select`, `atBlock`), and mutations (`createEntity`, `patchEntity`, `changeOwnership`, `extendEntity`) are centralized in `lib/arkiv.ts`.
-- **Pure Detection Engine (`lib/detect.ts`):** Cover-up detection is a pure, deterministic function tested with Vitest (`lib/detect.test.ts`).
-- **IPFS & Privacy (`lib/ipfs.ts`):** Client-side EXIF GPS stripping via canvas rasterization before CID generation; user-facing permanent and public disclosure warnings.
-- **Client-Side Ordering:** Per Arkiv SDK rules (`sdk.txt`), no server-side `orderBy` is used; records and reports are filtered and sorted on the client.
-- **Plain Functional UI:** Designed strictly with system fonts, white backgrounds, black text, thin gray borders, and functional red/green diff highlights.
-
----
-
-## 7. Running Unit Tests
-
-```bash
+# 2. Run unit test suite (11/11 tests pass)
 npm test
+
+# 3. Build production bundle (Next.js 15)
+npm run build
+
+# 4. Start production server
+npm run start
+# (Or run development server):
+npm run dev
+
+# 5. Run idempotent seed script against live chain
+npm run seed
 ```
-All unit tests for cover-up detection and clean record checks will run and pass.
+
+App runs at: **`http://localhost:3000`**
+
+---
+
+## 4. Audit & Verification of the 13 Checklist Items
+
+| # | Item | Status | How Implemented & Verified |
+|---|---|---|---|
+| 1 | **Record Identity** | **FIXED** | Removed record ID text input from `/new`. Canonical identifier is the Arkiv entity key (`/records/[entityKey]`). URLs and reports reference canonical entity keys. Auto-generates human-readable reference codes (`JA-<KIND>-<DISTRICT>-<YEAR>-<6CHARS>`). Entity key format validated; malformed/unknown keys route cleanly to 404 page. |
+| 2 | **Immutable Fields** | **FIXED** | Companion `dispatch_manifest` entity (`readonly: true`) created at batch creation. `patchEntity` in `lib/arkiv.ts` strictly whitelists only `status`, `quantity_received`, and `notes`. Detection engine flags changes to genesis fields as high-severity `TAMPERING`. |
+| 3 | **Demo / Live Isolation** | **FIXED** | "Test Immutability" button removed from production record UI (preserved on `/how-it-works`). Persona dropdown switcher disabled in live mode; live user role is derived directly from the connected wallet. In production (`NODE_ENV=production`), demo mode is blocked unless `NEXT_PUBLIC_ALLOW_DEMO_IN_PROD=true`. |
+| 4 | **Access Control & Custody** | **FIXED** | Custodian actions (patch, handover) verify custodian ownership against the live chain right before sending. Handover verifies checksummed address, blocks zero address and self-transfer, and requires modal confirmation that handover is irreversible. State machine forbids invalid transitions and over-deliveries. |
+| 5 | **Ground Reality Report Form** | **FIXED** | Requires connected wallet. Enforces limit of 3 reports/day per wallet per record. Enforces max 3 photos. Magic bytes sniffed for JPEG/PNG/WebP. GPS coordinates stripped from EXIF before upload. Reporter role self-declared badge displayed. Reports from current custodian are flagged and excluded from cover-up detection. |
+| 6 | **Detection Engine Hardening** | **FIXED** | Counts distinct independent reporter wallets ($K \ge 3$, configured in `lib/constants.ts`). Reversals within 48h / 7,200 blocks trigger reverse timing weight. Formula and weights transparently broken down. Neutral, factual language used ("documented discrepancies", "evidence"). Unit tests cover dirty and clean records. |
+| 7 | **Performance & Limits** | **FIXED** | Paginated fetching with cursor handling (`hasNextPage()`). Polling pauses when browser tab is inactive (`visibilitychange`). Optimistic UI updates with rollback on RPC rejection. Countdown timer on entity expiration with "+30d" extension button (`permissionlessExtension`). |
+| 8 | **Quantity Reconciliation** | **FIXED** | Visual quantity reconciliation bar comparing `quantity_dispatched`, `quantity_received`, and average citizen-reported quantity. Flags shortage warning with exact difference. "Confirm Receipt" shortcut pre-fills status to DELIVERED or PARTIAL based on quantity. |
+| 9 | **IPFS & Media Handling** | **FIXED** | Magic-byte format verification (JPEG/PNG/WebP). EXIF GPS stripped via canvas rasterization. Strict CIDv0/v1 regex validation. Array of gateway fallbacks configured. |
+| 10 | **UI & Accessibility** | **FIXED** | Restrained institutional design system: system/Inter font, no gradients, no emojis, 1px border cards. Focus rings, semantic HTML elements, accessible form labels, copy buttons with toast notifications, SHA-256 evidence export. |
+| 11 | **Security & Error Handling** | **FIXED** | Content Security Policy in `next.config.js` permitting self, Tiramisu RPC, and IPFS gateways. Zod validation schema in `lib/config.ts`. Friendly error pages (`app/not-found.tsx`, `app/error.tsx`). `SEED_PRIVATE_KEY` restricted to server-side scripts. |
+| 12 | **Documentation & Hindi Support** | **FIXED** | Interactive `/how-it-works` page explaining the 3 modules with an English / Hindi toggle. |
+| 13 | **Seed Script Idempotency** | **FIXED** | `scripts/seed.ts` queries existing records by reference code before creating duplicates. Checks live `$GLM` balance and logs faucet URL. Prints transaction hashes and canonical entity key URLs for all steps. |

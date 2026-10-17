@@ -1,0 +1,160 @@
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --bg-app: #F7F7F5;
+  --bg-surface: #FFFFFF;
+  --border-subtle: #E3E3DE;
+  --border-strong: #C4C4BC;
+  --text-main: #1A1A1A;
+  --text-muted: #6B6B66;
+  --primary: #1F4E79;
+  --primary-hover: #163857;
+  --primary-light: #EBF3FA;
+  --danger: #B42318;
+  --danger-light: #FEF3F2;
+  --danger-border: #FECDCA;
+  --success: #1A7F37;
+  --success-light: #ECFDF3;
+  --success-border: #A6F4C5;
+  --warning: #B54708;
+  --warning-light: #FFFAEB;
+  --warning-border: #FEDF89;
+  --radius: 6px;
+  --container-max: 1100px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-app);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* Form inputs & buttons */
+input, select, textarea, button {
+  font-family: inherit;
+  font-size: 14px;
+}
+
+input:focus, select:focus, textarea:focus, button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+/* Utility buttons */
+.btn-primary {
+  background-color: var(--primary);
+  color: #ffffff;
+  border: 1px solid var(--primary);
+  border-radius: var(--radius);
+  height: 36px;
+  padding: 0 14px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: var(--primary-hover);
+}
+
+.btn-secondary {
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  height: 36px;
+  padding: 0 14px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: background-color 0.1s ease, border-color 0.1s ease;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background-color: #F0F0ED;
+  border-color: var(--border-strong);
+}
+
+.btn-danger {
+  background-color: var(--danger);
+  color: #ffffff;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  height: 36px;
+  padding: 0 14px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background-color: #911C13;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: monospace;
+}
+
+.badge-default {
+  background-color: #ECECE8;
+  color: var(--text-main);
+}
+
+.badge-blue {
+  background-color: var(--primary-light);
+  color: var(--primary);
+}
+
+.badge-green {
+  background-color: var(--success-light);
+  color: var(--success);
+}
+
+.badge-red {
+  background-color: var(--danger-light);
+  color: var(--danger);
+}
+
+.badge-amber {
+  background-color: var(--warning-light);
+  color: var(--warning);
+}

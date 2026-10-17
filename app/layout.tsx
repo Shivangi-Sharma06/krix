@@ -1,10 +1,14 @@
 import type { Metadata } from 'next';
+import './globals.css';
 import { WalletProvider } from '@/components/WalletContext';
 import { Header } from '@/components/Header';
 
 export const metadata: Metadata = {
-  title: 'Krix (JanAudit) — Tamper-Evident Civic Audit Layer',
-  description: 'Supplies can be delayed. Truth cannot be deleted.',
+  title: 'JanAudit — Tamper-Evident Civic Audit Layer',
+  description: 'Supplies can be delayed. Truth cannot be deleted. Built on Arkiv & Tiramisu testnet.',
+  icons: {
+    icon: '/icon.svg',
+  },
 };
 
 export default function RootLayout({
@@ -14,20 +18,13 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body
-        style={{
-          margin: 0,
-          padding: 0,
-          backgroundColor: '#fff',
-          color: '#000',
-          fontFamily:
-            '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-          lineHeight: 1.5,
-        }}
-      >
+      <head>
+        <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+      </head>
+      <body>
         <WalletProvider>
           <Header />
-          <main style={{ maxWidth: '1200px', margin: '0 auto', padding: '16px' }}>
+          <main style={{ maxWidth: 'var(--container-max)', margin: '0 auto', padding: '24px 24px 60px' }}>
             {children}
           </main>
         </WalletProvider>

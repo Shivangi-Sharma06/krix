@@ -13,34 +13,28 @@ interface CoverUpAlertProps {
 
 export function CoverUpAlert({ detection, onDetectClick, loading }: CoverUpAlertProps) {
   return (
-    <div style={{ marginBottom: '20px' }}>
-      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '12px' }}>
+    <div style={{ marginBottom: '24px' }}>
+      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap' }}>
         <button
           onClick={onDetectClick}
           disabled={loading}
-          style={{
-            padding: '10px 18px',
-            fontSize: '14px',
-            fontWeight: 'bold',
-            background: '#b71c1c',
-            color: '#fff',
-            border: 'none',
-            cursor: loading ? 'not-allowed' : 'pointer',
-          }}
+          className="btn-danger"
+          style={{ height: '38px', padding: '0 16px' }}
         >
-          {loading ? 'Auditing On-Chain Revisions...' : '🔍 Detect Cover-Up'}
+          {loading ? 'Auditing On-Chain Revisions...' : 'Detect Cover-Up'}
         </button>
-        <span style={{ fontSize: '12px', color: '#666' }}>
-          Cross-examines official revisions against immutable citizen reports using PRD detection rules.
+        <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+          Runs automated cross-examination of official status changes against immutable ground reports.
         </span>
       </div>
 
       {detection && (
         <div
           style={{
-            border: detection.isCoverUp ? '2px solid #b71c1c' : '2px solid #2e7d32',
-            background: detection.isCoverUp ? '#fff5f5' : '#f1f8e9',
-            padding: '16px',
+            border: `1px solid ${detection.isCoverUp ? 'var(--danger-border)' : 'var(--success-border)'}`,
+            background: detection.isCoverUp ? 'var(--danger-light)' : 'var(--success-light)',
+            borderRadius: 'var(--radius)',
+            padding: '20px',
           }}
         >
           {/* Header & Score */}
@@ -50,45 +44,49 @@ export function CoverUpAlert({ detection, onDetectClick, loading }: CoverUpAlert
               justifyContent: 'space-between',
               alignItems: 'flex-start',
               flexWrap: 'wrap',
-              gap: '12px',
-              borderBottom: '1px solid #ccc',
-              paddingBottom: '12px',
-              marginBottom: '12px',
+              gap: '16px',
+              borderBottom: `1px solid ${detection.isCoverUp ? '#FECDCA' : '#A6F4C5'}`,
+              paddingBottom: '16px',
+              marginBottom: '16px',
             }}
           >
             <div>
-              <h3
+              <div
                 style={{
-                  margin: '0 0 4px 0',
-                  color: detection.isCoverUp ? '#b71c1c' : '#2e7d32',
                   fontSize: '18px',
+                  fontWeight: '700',
+                  color: detection.isCoverUp ? 'var(--danger)' : 'var(--success)',
+                  marginBottom: '4px',
                 }}
               >
-                {detection.isCoverUp ? '🚨 COVER-UP DETECTED' : '✅ NO COVER-UP DETECTED'}
-              </h3>
-              <div style={{ fontSize: '13px' }}>
+                {detection.isCoverUp ? 'COVER-UP DETECTED' : 'NO CONTRADICTION FOUND'}
+              </div>
+              <div style={{ fontSize: '14px', color: 'var(--text-main)', lineHeight: '1.5' }}>
                 {detection.isCoverUp
                   ? detection.alertMessage
-                  : 'Official record history is consistent with reported ground realities.'}
+                  : 'All official custodian edits are consistent with reported ground reality submissions.'}
               </div>
             </div>
 
             {/* Score Box */}
             <div
               style={{
-                border: '1px solid #999',
-                background: '#fff',
-                padding: '8px 12px',
+                border: '1px solid var(--border-subtle)',
+                background: '#FFFFFF',
+                borderRadius: 'var(--radius)',
+                padding: '10px 16px',
                 textAlign: 'center',
-                minWidth: '120px',
+                minWidth: '130px',
               }}
             >
-              <div style={{ fontSize: '11px', color: '#666' }}>COVER-UP SCORE</div>
+              <div style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                Cover-Up Score
+              </div>
               <div
                 style={{
-                  fontSize: '24px',
-                  fontWeight: 'bold',
-                  color: detection.score >= 50 ? '#b71c1c' : '#2e7d32',
+                  fontSize: '26px',
+                  fontWeight: '800',
+                  color: detection.score >= 50 ? 'var(--danger)' : 'var(--success)',
                 }}
               >
                 {detection.score} / 100
@@ -96,61 +94,77 @@ export function CoverUpAlert({ detection, onDetectClick, loading }: CoverUpAlert
             </div>
           </div>
 
-          {/* Transparent Formula Breakdown (FR-C7) */}
-          <div style={{ fontSize: '11px', color: '#555', marginBottom: '14px', background: '#fff', padding: '8px', border: '1px solid #eee' }}>
-            <strong>Transparent Formula Breakdown:</strong> {detection.scoreBreakdown.formula}
-            <div style={{ marginTop: '4px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-              <span>Contradicting Reports: <strong>+{detection.scoreBreakdown.contradictingReportsWeight}</strong></span>
+          {/* Formula Breakdown */}
+          <div
+            style={{
+              fontSize: '12px',
+              color: 'var(--text-muted)',
+              marginBottom: '16px',
+              background: '#FFFFFF',
+              padding: '10px 14px',
+              borderRadius: 'var(--radius)',
+              border: '1px solid var(--border-subtle)',
+            }}
+          >
+            <div><strong>Detection Formula:</strong> {detection.scoreBreakdown.formula}</div>
+            <div style={{ marginTop: '6px', display: 'flex', gap: '14px', flexWrap: 'wrap', color: 'var(--text-main)' }}>
+              <span>Independent Reporters: <strong>+{detection.scoreBreakdown.independentReportersWeight}</strong></span>
               <span>Avg Severity: <strong>+{detection.scoreBreakdown.averageSeverityWeight}</strong></span>
               <span>Status Reversals: <strong>+{detection.scoreBreakdown.statusReversalWeight}</strong></span>
               <span>Reverse Timing: <strong>+{detection.scoreBreakdown.reverseTimingWeight}</strong></span>
               <span>Quantity Gap: <strong>+{detection.scoreBreakdown.quantityGapWeight}</strong></span>
+              {detection.scoreBreakdown.tamperingWeight > 0 && (
+                <span>Tampering: <strong>+{detection.scoreBreakdown.tamperingWeight}</strong></span>
+              )}
             </div>
           </div>
 
-          {/* Evidences List */}
+          {/* Documented Evidence List */}
           {detection.evidences.length > 0 && (
             <div>
-              <div style={{ fontSize: '13px', fontWeight: 'bold', marginBottom: '8px', color: '#b71c1c' }}>
-                DOCUMENTED ON-CHAIN EVIDENCE:
+              <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--danger)', textTransform: 'uppercase', marginBottom: '10px', letterSpacing: '0.04em' }}>
+                On-Chain Evidence Items ({detection.evidences.length})
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {detection.evidences.map((evidence, idx) => (
                   <div
                     key={idx}
                     style={{
-                      border: '1px solid #e0b4b4',
-                      background: '#fff',
-                      padding: '10px',
-                      fontSize: '12px',
+                      border: '1px solid var(--border-subtle)',
+                      background: '#FFFFFF',
+                      borderRadius: 'var(--radius)',
+                      padding: '14px',
+                      fontSize: '13px',
                     }}
                   >
-                    <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+                    <div style={{ fontWeight: '600', marginBottom: '6px' }}>
                       {evidence.ruleId}: {evidence.description}
                     </div>
-                    <div style={{ color: '#444', marginBottom: '6px' }}>
-                      Edit Block: <strong>#{evidence.suspiciousEditBlock.toString()}</strong> | Custodian:{' '}
+                    <div style={{ color: 'var(--text-muted)', fontSize: '12px', marginBottom: '10px' }}>
+                      Suspicious Edit Block: <strong style={{ color: 'var(--text-main)' }}>#{evidence.suspiciousEditBlock.toString()}</strong> | Custodian:{' '}
                       <span style={{ fontFamily: 'monospace' }}>{evidence.custodianWallet}</span> | Tx:{' '}
                       <a
                         href={`${EXPLORER_URL}/tx/${evidence.suspiciousEditTxHash}`}
                         target="_blank"
                         rel="noreferrer"
-                        style={{ color: '#0066cc', fontFamily: 'monospace' }}
+                        style={{ fontFamily: 'monospace' }}
                       >
-                        {evidence.suspiciousEditTxHash.slice(0, 16)}...
+                        {evidence.suspiciousEditTxHash.slice(0, 18)}...
                       </a>
                     </div>
 
                     {evidence.contradictingReports.length > 0 && (
-                      <div style={{ marginTop: '8px' }}>
-                        <strong>Contradicting Immutable Reports:</strong>
-                        <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                      <div style={{ marginTop: '8px', borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
+                        <div style={{ fontSize: '12px', fontWeight: '600', marginBottom: '6px' }}>
+                          Contradicting Immutable Reports on Record:
+                        </div>
+                        <ul style={{ margin: 0, paddingLeft: '18px' }}>
                           {evidence.contradictingReports.map((cr, cIdx) => (
-                            <li key={cIdx} style={{ marginBottom: '6px' }}>
+                            <li key={cIdx} style={{ marginBottom: '8px' }}>
                               <span>
                                 Block #{cr.blockNumber.toString()} by{' '}
                                 <span style={{ fontFamily: 'monospace' }}>{cr.reporter.slice(0, 8)}...</span>: Verdict:{' '}
-                                <strong>{cr.verdict}</strong> (Severity {cr.severity}/10) - "{cr.description}"
+                                <strong>{cr.verdict}</strong> (Severity: {cr.severity}/10) - "{cr.description}"
                               </span>
                               {cr.photo_cids.length > 0 && (
                                 <div style={{ marginTop: '4px', display: 'flex', gap: '8px' }}>
@@ -160,14 +174,9 @@ export function CoverUpAlert({ detection, onDetectClick, loading }: CoverUpAlert
                                       href={getIpfsGatewayUrl(cid)}
                                       target="_blank"
                                       rel="noreferrer"
-                                      style={{
-                                        display: 'inline-block',
-                                        fontSize: '11px',
-                                        color: '#0066cc',
-                                        textDecoration: 'underline',
-                                      }}
+                                      style={{ fontSize: '12px' }}
                                     >
-                                      [View Photo Evidence ({cid.slice(0, 10)}...)]
+                                      [View Photo ({cid.slice(0, 10)}...)]
                                     </a>
                                   ))}
                                 </div>

@@ -1,9 +1,9 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { createWalletClient, custom, type Hex } from 'viem';
-import { tiramisu } from '@arkiv-network/sdk/chains';
+import { type Hex, isAddress, getAddress } from 'viem';
 import { getWalletArkivClient } from '@/lib/arkiv';
+import { isDemoModeActive } from '@/lib/config';
 
 export interface DemoWallet {
   name: string;
@@ -50,7 +50,10 @@ interface WalletContextType {
   isMetaMask: boolean;
   activeDemoWallet: DemoWallet | null;
   balanceGlm: string;
+  isCorrectNetwork: boolean;
+  showDemoSwitcher: boolean;
   connectMetaMask: () => Promise<void>;
+  switchNetwork: () => Promise<void>;
   switchDemoWallet: (wallet: DemoWallet) => void;
   disconnect: () => void;
   getArkivClient: () => any;
@@ -62,67 +65,122 @@ const WalletContext = createContext<WalletContextType>({
   isMetaMask: false,
   activeDemoWallet: null,
   balanceGlm: '0.00',
+  isCorrectNetwork: true,
+  showDemoSwitcher: false,
   connectMetaMask: async () => {},
+  switchNetwork: async () => {},
   switchDemoWallet: () => {},
   disconnect: () => {},
   getArkivClient: () => null,
 });
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
-  const [address, setAddress] = useState<Hex | null>(PRESET_WALLETS[2].address); // Default to Wallet C for demo
-  const [activeDemoWallet, setActiveDemoWallet] = useState<DemoWallet | null>(PRESET_WALLETS[2]);
+  const [address, setAddress] = useState<Hex | null>(null);
+  const [activeDemoWallet, setActiveDemoWallet] = useState<DemoWallet | null>(null);
   const [isMetaMask, setIsMetaMask] = useState(false);
-  const [balanceGlm, setBalanceGlm] = useState('12.50');
+  const [balanceGlm, setBalanceGlm] = useState('0.00');
+  const [isCorrectNetwork, setIsCorrectNetwork] = useState(true);
+  const [showDemoSwitcher, setShowDemoSwitcher] = useState(false);
 
   useEffect(() => {
-    // Check if ethereum window is available
+    const demoMode = isDemoModeActive();
+    setShowDemoSwitcher(demoMode);
+
+    if (demoMode && !address) {
+      setAddress(PRESET_WALLETS[2].address);
+      setActiveDemoWallet(PRESET_WALLETS[2]);
+      setBalanceGlm('12.50');
+    }
+
     if (typeof window !== 'undefined' && (window as any).ethereum) {
       setIsMetaMask(true);
+      const ethereum = (window as any).ethereum;
+
+      // Listen for account and chain change events (Item 8)
+      const handleAccountsChanged = (accounts: string[]) => {
+        if (accounts.length > 0) {
+          setAddress(accounts[0] as Hex);
+          setActiveDemoWallet(null);
+        } else {
+          setAddress(null);
+          setActiveDemoWallet(null);
+        }
+      };
+
+      const handleChainChanged = (chainId: string) => {
+        const isTiramisu = chainId === '0x761351' || chainId === '7738577';
+        setIsCorrectNetwork(isTiramisu);
+      };
+
+      ethereum.on?.('accountsChanged', handleAccountsChanged);
+      ethereum.on?.('chainChanged', handleChainChanged);
+
+      // Check current chain
+      ethereum.request?.({ method: 'eth_chainId' }).then((chainId: string) => {
+        setIsCorrectNetwork(chainId === '0x761351' || chainId === '7738577');
+      }).catch(() => {});
+
+      return () => {
+        ethereum.removeListener?.('accountsChanged', handleAccountsChanged);
+        ethereum.removeListener?.('chainChanged', handleChainChanged);
+      };
     }
   }, []);
 
+  const switchNetwork = async () => {
+    if (typeof window === 'undefined' || !(window as any).ethereum) return;
+    const provider = (window as any).ethereum;
+    try {
+      await provider.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: '0x761351' }],
+      });
+      setIsCorrectNetwork(true);
+    } catch (switchError: any) {
+      if (switchError?.code === 4902) {
+        await provider.request({
+          method: 'wallet_addEthereumChain',
+          params: [
+            {
+              chainId: '0x761351',
+              chainName: 'Tiramisu Testnet',
+              rpcUrls: ['https://rpc.tiramisu.db-chain.testnet.arkiv.network'],
+              nativeCurrency: { name: 'Golem', symbol: 'GLM', decimals: 18 },
+              blockExplorerUrls: ['https://tiramisu.explorer.arkiv.network'],
+            },
+          ],
+        });
+        setIsCorrectNetwork(true);
+      }
+    }
+  };
+
   const connectMetaMask = async () => {
     if (typeof window === 'undefined' || !(window as any).ethereum) {
-      alert('MetaMask or Web3 wallet extension not detected. Using built-in demo wallet switch.');
+      window.open('https://metamask.io/download/', '_blank');
       return;
     }
     try {
-      const ethereum = (window as any).ethereum;
-      const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
+      let provider = (window as any).ethereum;
+      if (provider?.providers?.length) {
+        provider = provider.providers.find((p: any) => p.isMetaMask) || provider.providers[0];
+      }
+
+      const accounts = await provider.request({ method: 'eth_requestAccounts' });
       if (accounts && accounts[0]) {
         setAddress(accounts[0] as Hex);
         setActiveDemoWallet(null);
-
-        // Check & prompt network switch
-        try {
-          await ethereum.request({
-            method: 'wallet_switchEthereumChain',
-            params: [{ chainId: '0x761351' }], // 7738577 in hex
-          });
-        } catch (switchError: any) {
-          if (switchError.code === 4902) {
-            await ethereum.request({
-              method: 'wallet_addEthereumChain',
-              params: [
-                {
-                  chainId: '0x761351',
-                  chainName: 'Tiramisu Testnet',
-                  rpcUrls: ['https://rpc.tiramisu.db-chain.testnet.arkiv.network'],
-                  nativeCurrency: { name: 'Golem', symbol: 'GLM', decimals: 18 },
-                  blockExplorerUrls: ['https://tiramisu.explorer.arkiv.network'],
-                },
-              ],
-            });
-          }
-        }
+        await switchNetwork();
       }
     } catch (err: any) {
-      console.error('MetaMask connection error:', err);
-      alert('Could not connect MetaMask: ' + err.message);
+      if (err?.code !== 4001) {
+        console.error('MetaMask connection error:', err);
+      }
     }
   };
 
   const switchDemoWallet = (wallet: DemoWallet) => {
+    if (!showDemoSwitcher) return;
     setAddress(wallet.address);
     setActiveDemoWallet(wallet);
   };
@@ -136,7 +194,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (typeof window !== 'undefined' && (window as any).ethereum && !activeDemoWallet) {
       return getWalletArkivClient((window as any).ethereum);
     }
-    // Return simulated demo client with active address
     return {
       account: { address: address || PRESET_WALLETS[0].address },
       createEntity: async () => {
@@ -162,7 +219,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         isMetaMask,
         activeDemoWallet,
         balanceGlm,
+        isCorrectNetwork,
+        showDemoSwitcher,
         connectMetaMask,
+        switchNetwork,
         switchDemoWallet,
         disconnect,
         getArkivClient,

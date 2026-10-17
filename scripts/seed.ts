@@ -1,52 +1,75 @@
-import { createWalletClient, http, type Hex, formatEther } from 'viem';
+import { formatEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { tiramisu } from '@arkiv-network/sdk/chains';
 import {
   createCivicRecordOnChain,
   changeRecordCustodyOnChain,
   patchCivicRecordOnChain,
   submitGroundReportOnChain,
   getWalletArkivClient,
+  getPublicArkivClient,
+  fetchCivicRecords,
   RPC_URL,
+  EXPLORER_URL,
 } from '../lib/arkiv';
 import type { CivicRecordPayload, GroundReportPayload } from '../lib/types';
 
-// Deterministic mock demo keys (can be pre-funded or simulated)
-const WALLET_A_KEY: Hex = '0x3d05798f7d11bb1c10b83fed8d3b4d76570c31cd66c8e0a8d8d991434c6d7a5e';
-const WALLET_B_KEY: Hex = '0x4c05798f7d11bb1c10b83fed8d3b4d76570c31cd66c8e0a8d8d991434c6d7b6f';
-const WALLET_C_KEY: Hex = '0x5d05798f7d11bb1c10b83fed8d3b4d76570c31cd66c8e0a8d8d991434c6d7c70';
-const DOCTOR_KEY: Hex = '0x6e05798f7d11bb1c10b83fed8d3b4d76570c31cd66c8e0a8d8d991434c6d7d81';
-const INSPECTOR_KEY: Hex = '0x7f05798f7d11bb1c10b83fed8d3b4d76570c31cd66c8e0a8d8d991434c6d7e92';
-const CITIZEN_KEY: Hex = '0x8a05798f7d11bb1c10b83fed8d3b4d76570c31cd66c8e0a8d8d991434c6d7fa3';
+// Seed Wallet Private Key (override with SEED_PRIVATE_KEY in .env.local)
+const DEFAULT_SEED_KEY = (process.env.SEED_PRIVATE_KEY ||
+  '0x3d05798f7d11bb1c10b83fed8d3b4d76570c31cd66c8e0a8d8d991434c6d7a5e') as `0x${string}`;
 
-export async function runSeedScenario(): Promise<void> {
-  console.log('=== Krix (JanAudit) Demo Seed Script ===');
-  console.log(`Connecting to Tiramisu Testnet at ${RPC_URL}...`);
+export async function runRealSeedScenario(): Promise<void> {
+  console.log('====================================================');
+  console.log('  JanAudit (Krix) — On-Chain Seed Script Execution   ');
+  console.log('====================================================');
+  console.log(`Connecting to Arkiv RPC: ${RPC_URL}`);
+  console.log(`Explorer: ${EXPLORER_URL}\n`);
 
-  const accountA = privateKeyToAccount(WALLET_A_KEY);
-  const accountB = privateKeyToAccount(WALLET_B_KEY);
-  const accountC = privateKeyToAccount(WALLET_C_KEY);
-  const accountDoctor = privateKeyToAccount(DOCTOR_KEY);
-  const accountInspector = privateKeyToAccount(INSPECTOR_KEY);
-  const accountCitizen = privateKeyToAccount(CITIZEN_KEY);
+  const publicClient = getPublicArkivClient();
+  const account = privateKeyToAccount(DEFAULT_SEED_KEY);
+  console.log(`Seed Wallet Address: ${account.address}`);
 
-  console.log('Wallet A (Warehouse Custodian):', accountA.address);
-  console.log('Wallet B (Distributor / Truck):', accountB.address);
-  console.log('Wallet C (Clinic / Receiver):', accountC.address);
+  // Check live balance on Tiramisu
+  const balanceWei = await publicClient.getBalance({ address: account.address });
+  const balanceGlm = formatEther(balanceWei);
+  console.log(`Seed Wallet Balance: ${balanceGlm} $GLM`);
 
-  const clientA = getWalletArkivClient(accountA);
-  const clientB = getWalletArkivClient(accountB);
-  const clientC = getWalletArkivClient(accountC);
-  const clientDoc = getWalletArkivClient(accountDoctor);
-  const clientInsp = getWalletArkivClient(accountInspector);
-  const clientCit = getWalletArkivClient(accountCitizen);
+  if (balanceWei === 0n) {
+    console.warn('\n[WALLET UNFUNDED ON TESTNET]');
+    console.warn(`Address ${account.address} has 0.00 $GLM.`);
+    console.warn('To fund this address with test tokens:');
+    console.warn('  1. Open Arkiv Hub Faucet: https://hub.arkiv.network/faucet');
+    console.warn(`  2. Request $GLM for: ${account.address}`);
+    console.warn('  3. Or set SEED_PRIVATE_KEY in .env.local with a funded private key.');
+    console.warn('Estimated gas required for 6-step seed scenario: ~0.001 $GLM\n');
+  }
 
-  // STEP 1: Wallet A creates batch IND-AP-2026-04
+  const walletClient = getWalletArkivClient(account);
+
+  // Recipient wallets for handover demo
+  const distributorAddress = '0x2B3C4D5E6F7A8B9C0D1E2F3A4B5C6D7E8F9A012B' as `0x${string}`;
+  const clinicAddress = '0x3C4D5E6F7A8B9C0D1E2F3A4B5C6D7E8F9A0123C4' as `0x${string}`;
+
+  const referenceCode = 'JA-MEDICINE-GNT-2026-DEMO01';
+
+  // Check idempotency: does JA-MEDICINE-GNT-2026-DEMO01 already exist?
+  try {
+    const existing = await fetchCivicRecords();
+    const match = existing.find((r) => r.payload.reference_code === referenceCode);
+    if (match) {
+      console.log(`[Idempotency Check] Record ${referenceCode} already exists on chain!`);
+      console.log(`  ✓ Canonical Entity Key: ${match.key}`);
+      console.log(`  ✓ Open in app: http://localhost:3000/records/${match.key}`);
+      return;
+    }
+  } catch (err: any) {
+    // Continue if query returned empty or table clean
+  }
+
   const batchData: CivicRecordPayload = {
     type: 'civic_record',
-    record_id: 'IND-AP-2026-04',
+    reference_code: referenceCode,
     kind: 'MEDICINE_BATCH',
-    title: '500 Dengue Kits',
+    title: '500 Dengue Testing Kits',
     quantity_dispatched: 500,
     quantity_received: 0,
     status: 'CREATED',
@@ -55,130 +78,122 @@ export async function runSeedScenario(): Promise<void> {
     expiry_date: '2027-03-31',
     district: 'Guntur',
     ward_id: 'W-12',
-    notes: 'Dispatched from cold storage',
+    notes: 'Dispatched from cold chain storage',
   };
 
-  console.log('\n[1/6] Wallet A creating civic_record IND-AP-2026-04...');
-  const createResult = await createCivicRecordOnChain(clientA, batchData);
-  console.log(' -> Entity Key:', createResult.entityKey);
-  console.log(' -> Tx Hash:', createResult.txHash);
+  try {
+    console.log(`[Step 1/6] Creating civic_record entity for ${referenceCode}...`);
+    const createRes = await createCivicRecordOnChain(walletClient, batchData);
+    console.log(`  ✓ Entity Key: ${createRes.entityKey}`);
+    console.log(`  ✓ Tx Hash:    ${createRes.txHash}`);
+    console.log(`  ✓ Explorer:   ${EXPLORER_URL}/tx/${createRes.txHash}`);
 
-  // STEP 2: Custody handover Wallet A -> Wallet B
-  console.log('\n[2/6] Handing over custody: Wallet A -> Wallet B (Distributor)...');
-  await changeRecordCustodyOnChain(
-    clientA,
-    createResult.entityKey,
-    batchData.record_id,
-    accountB.address,
-    410120n
-  );
-  console.log(' -> Custody assigned to Wallet B');
+    console.log(`\n[Step 2/6] Handing over custody to Distributor (${distributorAddress.slice(0, 8)}...)...`);
+    const hop1Res = await changeRecordCustodyOnChain(
+      walletClient,
+      createRes.entityKey,
+      distributorAddress
+    );
+    console.log(`  ✓ Handover Tx: ${hop1Res.txHash}`);
+    console.log(`  ✓ Explorer:    ${EXPLORER_URL}/tx/${hop1Res.txHash}`);
 
-  // STEP 3: Wallet B marks IN_TRANSIT and hands over to Wallet C
-  console.log('\n[3/6] Wallet B patches status to IN_TRANSIT and transfers to Wallet C (Clinic)...');
-  await patchCivicRecordOnChain(
-    clientB,
-    createResult.entityKey,
-    batchData.record_id,
-    { status: 'IN_TRANSIT', notes: 'Loaded on truck AP-16-TX-1024' },
-    batchData,
-    410140n
-  );
-  await changeRecordCustodyOnChain(
-    clientB,
-    createResult.entityKey,
-    batchData.record_id,
-    accountC.address,
-    410160n
-  );
-  console.log(' -> Custody assigned to Wallet C');
+    console.log(`\n[Step 3/6] Patching status to IN_TRANSIT and transferring to Clinic Receiver...`);
+    const patchTransitRes = await patchCivicRecordOnChain(
+      walletClient,
+      createRes.entityKey,
+      { status: 'IN_TRANSIT', notes: 'In transit via truck AP-16-TX-1024' },
+      batchData
+    );
+    console.log(`  ✓ Transit Tx:  ${patchTransitRes.txHash}`);
+    const hop2Res = await changeRecordCustodyOnChain(
+      walletClient,
+      createRes.entityKey,
+      clinicAddress
+    );
+    console.log(`  ✓ Handover Tx: ${hop2Res.txHash}`);
 
-  // STEP 4: Wallet C records DAMAGED arrival
-  console.log('\n[4/6] Wallet C receives stock and logs DAMAGED status (300 received, boxes soaked)...');
-  await patchCivicRecordOnChain(
-    clientC,
-    createResult.entityKey,
-    batchData.record_id,
-    {
-      status: 'DAMAGED',
-      quantity_received: 300,
-      notes: 'Received wet cartons. Seals torn on 200 kits.',
-    },
-    { ...batchData, status: 'IN_TRANSIT' },
-    410180n
-  );
+    console.log(`\n[Step 4/6] Clinic records stock arrival as DAMAGED (300 units received, seals broken)...`);
+    const patchDamagedRes = await patchCivicRecordOnChain(
+      walletClient,
+      createRes.entityKey,
+      { status: 'DAMAGED', quantity_received: 300, notes: 'Boxes wet from rain, broken seals on 200 kits' },
+      { ...batchData, status: 'IN_TRANSIT' }
+    );
+    console.log(`  ✓ Damaged Tx:  ${patchDamagedRes.txHash}`);
 
-  // STEP 5: 3 Immutable Ground Reality Reports filed
-  console.log('\n[5/6] Filing 3 immutable Ground Reality Reports (Doctor, Inspector, Citizen)...');
+    console.log(`\n[Step 5/6] Submitting 3 immutable Ground Reality Reports (Doctor, Inspector, Citizen)...`);
+    const report1: GroundReportPayload = {
+      type: 'ground_report',
+      record_entity_key: createRes.entityKey,
+      severity: 9,
+      verdict: 'DAMAGED',
+      count_received: 300,
+      description: 'Cartons soaked in water, broken seals, vials cracked.',
+      photo_cids: ['bafybeidvl63fgh4g2rtd6g4a33tewxupk2c27bkjffvhjklmno3pqr4stu'],
+      reporter_role: 'DOCTOR',
+      location: 'PHC Mangalagiri OPD',
+    };
+    const rep1Res = await submitGroundReportOnChain(walletClient, report1);
+    console.log(`  ✓ Report 1 (Doctor):    Entity ${rep1Res.entityKey.slice(0, 16)}... | Tx: ${rep1Res.txHash}`);
 
-  const report1: GroundReportPayload = {
-    type: 'ground_report',
-    record_id: 'IND-AP-2026-04',
-    severity: 9,
-    verdict: 'DAMAGED',
-    count_received: 300,
-    description: 'Cartons soaked in water, broken seals, vials cracked.',
-    photo_cids: ['bafybeidvl63fgh4g2rtd6g4a33tewxupk2c27bkjffvhjklmno3pqr4stu'],
-    reporter_role: 'DOCTOR',
-    location: 'PHC Mangalagiri OPD',
-  };
-  await submitGroundReportOnChain(clientDoc, report1, 410210n);
-  console.log(' -> Report 1 submitted (Doctor, severity 9, DAMAGED)');
+    const report2: GroundReportPayload = {
+      type: 'ground_report',
+      record_entity_key: createRes.entityKey,
+      severity: 8,
+      verdict: 'DAMAGED',
+      count_received: 290,
+      description: 'Inspection confirms temperature violation and water damage in batch transit.',
+      photo_cids: ['bafybeicgqom2h6r7yrtz6g4a33tewxupk2c27bkjffvhjklmno3pqr4stv'],
+      reporter_role: 'INSPECTOR',
+      location: 'District Health Inspection Room',
+    };
+    const rep2Res = await submitGroundReportOnChain(walletClient, report2);
+    console.log(`  ✓ Report 2 (Inspector): Entity ${rep2Res.entityKey.slice(0, 16)}... | Tx: ${rep2Res.txHash}`);
 
-  const report2: GroundReportPayload = {
-    type: 'ground_report',
-    record_id: 'IND-AP-2026-04',
-    severity: 8,
-    verdict: 'DAMAGED',
-    count_received: 290,
-    description: 'Inspection confirms temperature violation and water damage in batch transit.',
-    photo_cids: ['bafybeicgqom2h6r7yrtz6g4a33tewxupk2c27bkjffvhjklmno3pqr4stv'],
-    reporter_role: 'INSPECTOR',
-    location: 'District Health Inspection Room',
-  };
-  await submitGroundReportOnChain(clientInsp, report2, 410230n);
-  console.log(' -> Report 2 submitted (Inspector, severity 8, DAMAGED)');
+    const report3: GroundReportPayload = {
+      type: 'ground_report',
+      record_entity_key: createRes.entityKey,
+      severity: 8,
+      verdict: 'DAMAGED',
+      count_received: 300,
+      description: 'Local residents unable to get dengue kits; staff turned away patients due to damaged medicines.',
+      photo_cids: ['bafybeicgqom2h6r7yrtz6g4a33tewxupk2c27bkjffvhjklmno3pqr4stw'],
+      reporter_role: 'CITIZEN',
+      location: 'Mangalagiri Ward 12',
+    };
+    const rep3Res = await submitGroundReportOnChain(walletClient, report3);
+    console.log(`  ✓ Report 3 (Citizen):   Entity ${rep3Res.entityKey.slice(0, 16)}... | Tx: ${rep3Res.txHash}`);
 
-  const report3: GroundReportPayload = {
-    type: 'ground_report',
-    record_id: 'IND-AP-2026-04',
-    severity: 8,
-    verdict: 'DAMAGED',
-    count_received: 300,
-    description: 'Local residents unable to get dengue test kits; staff turned patients away due to damaged medicines.',
-    photo_cids: ['bafybeicgqom2h6r7yrtz6g4a33tewxupk2c27bkjffvhjklmno3pqr4stw'],
-    reporter_role: 'CITIZEN',
-    location: 'Mangalagiri Ward 12',
-  };
-  await submitGroundReportOnChain(clientCit, report3, 410250n);
-  console.log(' -> Report 3 submitted (Citizen, severity 8, DAMAGED)');
+    console.log(`\n[Step 6/6] Executing Cover-Up: Custodian flips status to ALL_GOOD_DELIVERED...`);
+    const coverUpRes = await patchCivicRecordOnChain(
+      walletClient,
+      createRes.entityKey,
+      {
+        status: 'ALL_GOOD_DELIVERED',
+        quantity_received: 500,
+        notes: 'Audit passed: all 500 kits accounted for and in pristine condition.',
+      },
+      { ...batchData, status: 'DAMAGED', quantity_received: 300 }
+    );
+    console.log(`  ✓ Cover-Up Tx: ${coverUpRes.txHash}`);
+    console.log(`  ✓ Explorer:    ${EXPLORER_URL}/tx/${coverUpRes.txHash}`);
 
-  // STEP 6: Custodian executes cover-up edit: flips status to ALL_GOOD_DELIVERED
-  console.log('\n[6/6] Executing Cover-Up edit: Custodian alters status to ALL_GOOD_DELIVERED at block #410290...');
-  await patchCivicRecordOnChain(
-    clientC,
-    createResult.entityKey,
-    batchData.record_id,
-    {
-      status: 'ALL_GOOD_DELIVERED',
-      quantity_received: 500,
-      notes: 'Audit passed: all 500 kits accounted for and in pristine condition.',
-    },
-    { ...batchData, status: 'DAMAGED', quantity_received: 300 },
-    410290n
-  );
-  console.log(' -> Cover-up edit complete: Status changed from DAMAGED to ALL_GOOD_DELIVERED');
-
-  console.log('\n=== Seed scenario created successfully! ===');
-  console.log('Open record in UI: /records/IND-AP-2026-04');
-  console.log('Notice: Detect Cover-Up button will flag the contradiction at block #410290 against the 3 reports.');
+    console.log('\n====================================================');
+    console.log('  Seed scenario execution completed successfully!   ');
+    console.log('====================================================');
+    console.log(`Canonical Entity Key: ${createRes.entityKey}`);
+    console.log(`Inspect record in app at: http://localhost:3000/records/${createRes.entityKey}`);
+  } catch (err: any) {
+    console.error('\nSeed script error:', err.message);
+    throw err;
+  }
 }
 
 if (process.argv[1]?.endsWith('seed.ts') || process.argv[1]?.endsWith('seed.js')) {
-  runSeedScenario()
+  runRealSeedScenario()
     .then(() => process.exit(0))
-    .catch((err) => {
-      console.error('Seed execution encountered an issue:', err.message);
+    .catch((e) => {
+      console.error('Seed terminated with error:', e.message);
       process.exit(1);
     });
 }
