@@ -90,35 +90,40 @@ export function LiveChainStrip() {
         const witnessWallets = new Set<string>();
         let contradictionsCount = 0;
 
-        for (const r of records) {
-          if (r.owner) witnessWallets.add(r.owner.toLowerCase());
-          if (r.creator) witnessWallets.add(r.creator.toLowerCase());
+        await Promise.allSettled(
+          records.slice(0, 10).map(async (r) => {
+            if (r.owner) witnessWallets.add(r.owner.toLowerCase());
+            if (r.creator) witnessWallets.add(r.creator.toLowerCase());
 
-          // Count authority responses (any record that received status update or notes)
-          if (r.payload.quantity_received > 0 || r.payload.notes) {
-            responsesCount++;
-          }
+            if (r.payload.quantity_received > 0 || r.payload.notes) {
+              responsesCount++;
+            }
 
-          const reps = await fetchGroundReports(r.key);
-          complaintsCount += reps.length;
-          for (const rp of reps) {
-            if (rp.creator) witnessWallets.add(rp.creator.toLowerCase());
-          }
+            try {
+              const reps = await fetchGroundReports(r.key);
+              complaintsCount += reps.length;
+              for (const rp of reps) {
+                if (rp.creator) witnessWallets.add(rp.creator.toLowerCase());
+              }
 
-          const detection = detectCoverUp({
-            currentRecord: r.payload,
-            manifest: null,
-            reports: reps.map((rp) => ({
-              key: rp.key,
-              blockNumber: rp.createdAt,
-              txHash: (rp as any).txHash || '',
-              creator: rp.creator || '0x0',
-              payload: rp.payload,
-            })),
-            revisions: [],
-          });
-          if (detection.isCoverUp) contradictionsCount++;
-        }
+              const detection = detectCoverUp({
+                currentRecord: r.payload,
+                manifest: null,
+                reports: reps.map((rp) => ({
+                  key: rp.key,
+                  blockNumber: rp.createdAt,
+                  txHash: (rp as any).txHash || '',
+                  creator: rp.creator || '0x0',
+                  payload: rp.payload,
+                })),
+                revisions: [],
+              });
+              if (detection.isCoverUp) contradictionsCount++;
+            } catch {
+              // Ignore single record failure
+            }
+          })
+        );
 
         if (isMounted) {
           setStats({

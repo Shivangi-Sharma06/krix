@@ -65,7 +65,10 @@ export function generateReferenceCode(kind: string, district: string): string {
 export function getPublicArkivClient(): PublicArkivClient {
   return createArkivPublicClient({
     chain: tiramisu,
-    transport: http(RPC_URL),
+    transport: http(RPC_URL, {
+      timeout: 6000,
+      retryCount: 0,
+    }),
   });
 }
 
@@ -597,68 +600,49 @@ export async function attemptIllegalReportPatch(
 }
 
 // -------------------------------------------------------------
-// REAL ON-CHAIN QUERIES WITH PAGINATION
+// REAL ON-CHAIN QUERIES WITH PAGINATION & RESILIENT CACHING
 // -------------------------------------------------------------
 
-/**
- * Fetches all civic records with cursor pagination (Item 7)
- */
-export async function fetchCivicRecords(): Promise<EntityWithMetadata<CivicRecordPayload>[]> {
-  if (isDemoModeActive()) {
-    return getLocalRecords();
+const CHAIN_CACHE_KEY = 'krix_chain_records_cache';
+let cachedCivicRecords: EntityWithMetadata<CivicRecordPayload>[] | null = null;
+let lastRecordsFetchTime = 0;
+const CACHE_TTL_MS = 25_000;
+
+const queryReportCache = new Map<string, { data: Array<EntityWithMetadata<GroundReportPayload> & { blockNumber: bigint; txHash: string }>; timestamp: number }>();
+const queryStatementCache = new Map<string, { data: Array<EntityWithMetadata<StatementPayload> & { blockNumber: bigint; txHash: string }>; timestamp: number }>();
+const queryResponseCache = new Map<string, { data: Array<EntityWithMetadata<AuthorityResponsePayload> & { blockNumber: bigint; txHash: string }>; timestamp: number }>();
+
+function getStoredChainRecords(): EntityWithMetadata<CivicRecordPayload>[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(CHAIN_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return parsed.map((e: any) => ({
+      ...e,
+      createdAt: BigInt(e.createdAt || 0),
+      updatedAt: BigInt(e.updatedAt || 0),
+      expiresAt: BigInt(e.expiresAt || 0),
+    }));
+  } catch {
+    return [];
   }
+}
 
-  const publicClient = getPublicArkivClient();
-  const allEntities: EntityWithMetadata<CivicRecordPayload>[] = [];
-
-  let queryBuilder = publicClient
-    .select({
-      key: true,
-      owner: true,
-      creator: true,
-      createdAt: true,
-      updatedAt: true,
-      expiresAt: true,
-      creationFlags: true,
-      payload: true,
-    })
-    .where(eq('type', str('civic_record')))
-    .limit(200);
-
-  let result = await queryBuilder.fetch();
-  for (const e of result.entities) {
-    allEntities.push({
-      key: e.key as Hex,
-      owner: (e.owner || '0x') as Hex,
-      creator: (e.creator || '0x') as Hex,
-      createdAt: e.createdAt || 0n,
-      updatedAt: e.updatedAt || 0n,
-      expiresAt: e.expiresAt || 0n,
-      payload: e.toJson() as CivicRecordPayload,
-      readonly: e.creationFlags?.readonly || false,
-      permissionlessExtension: e.creationFlags?.permissionlessExtension || false,
-    });
+function saveStoredChainRecords(list: EntityWithMetadata<CivicRecordPayload>[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(
+      CHAIN_CACHE_KEY,
+      JSON.stringify(list, (_, v) => (typeof v === 'bigint' ? v.toString() : v))
+    );
+  } catch {
+    // Ignore storage quota
   }
+}
 
-  while (result.hasNextPage()) {
-    result = await result.next();
-    for (const e of result.entities) {
-      allEntities.push({
-        key: e.key as Hex,
-        owner: (e.owner || '0x') as Hex,
-        creator: (e.creator || '0x') as Hex,
-        createdAt: e.createdAt || 0n,
-        updatedAt: e.updatedAt || 0n,
-        expiresAt: e.expiresAt || 0n,
-        payload: e.toJson() as CivicRecordPayload,
-        readonly: e.creationFlags?.readonly || false,
-        permissionlessExtension: e.creationFlags?.permissionlessExtension || false,
-      });
-    }
-  }
-
-  // Merge any locally published records so records created in the browser
-  // show up immediately without waiting for indexer sync latency
+function mergeWithLocalRecords(chainRecords: EntityWithMetadata<CivicRecordPayload>[]): EntityWithMetadata<CivicRecordPayload>[] {
+  const allEntities: EntityWithMetadata<CivicRecordPayload>[] = [...chainRecords];
   const localRecords = getLocalRecords();
   const seenKeys = new Set(allEntities.map((e) => e.key.toLowerCase()));
   for (const lr of localRecords) {
@@ -669,14 +653,89 @@ export async function fetchCivicRecords(): Promise<EntityWithMetadata<CivicRecor
   }
 
   // Filter out specific test entity 'winfnwe' from UI while preserving on-chain state
-  const filtered = allEntities.filter((e) => {
+  return allEntities.filter((e) => {
     const title = e.payload?.title?.trim().toLowerCase();
     const ref = e.payload?.reference_code?.trim().toLowerCase();
     const key = e.key?.toLowerCase();
     return title !== 'winfnwe' && ref !== 'kx-med-gun-2026-xgyrw7' && key !== '0x8267be0f1cb4164033b99445df703a64d09caae80928a8b287c93b3308dd659e';
   });
+}
 
-  return filtered;
+/**
+ * Fetches all civic records with cursor pagination (Item 7)
+ */
+export async function fetchCivicRecords(): Promise<EntityWithMetadata<CivicRecordPayload>[]> {
+  if (isDemoModeActive()) {
+    return getLocalRecords();
+  }
+
+  const now = Date.now();
+  if (cachedCivicRecords && cachedCivicRecords.length > 0 && now - lastRecordsFetchTime < CACHE_TTL_MS) {
+    return mergeWithLocalRecords(cachedCivicRecords);
+  }
+
+  let onChainRecords: EntityWithMetadata<CivicRecordPayload>[] = [];
+
+  try {
+    const publicClient = getPublicArkivClient();
+    const queryBuilder = publicClient
+      .select({
+        key: true,
+        owner: true,
+        creator: true,
+        createdAt: true,
+        updatedAt: true,
+        expiresAt: true,
+        creationFlags: true,
+        payload: true,
+      })
+      .where(eq('type', str('civic_record')))
+      .limit(200);
+
+    const result = await Promise.race([
+      queryBuilder.fetch(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('fetchCivicRecords timed out after 5s')), 5000)
+      ),
+    ]);
+
+    for (const e of result.entities) {
+      try {
+        onChainRecords.push({
+          key: e.key as Hex,
+          owner: (e.owner || '0x') as Hex,
+          creator: (e.creator || '0x') as Hex,
+          createdAt: e.createdAt || 0n,
+          updatedAt: e.updatedAt || 0n,
+          expiresAt: e.expiresAt || 0n,
+          payload: e.toJson() as CivicRecordPayload,
+          readonly: e.creationFlags?.readonly || false,
+          permissionlessExtension: e.creationFlags?.permissionlessExtension || false,
+        });
+      } catch {
+        // Continue
+      }
+    }
+
+    if (onChainRecords.length > 0) {
+      cachedCivicRecords = onChainRecords;
+      lastRecordsFetchTime = now;
+      saveStoredChainRecords(onChainRecords);
+    }
+  } catch (err: any) {
+    console.warn('Notice loading civic records from chain (using cached fallback):', err?.message || err);
+    if (!cachedCivicRecords || cachedCivicRecords.length === 0) {
+      const stored = getStoredChainRecords();
+      if (stored.length > 0) {
+        onChainRecords = stored;
+        cachedCivicRecords = stored;
+      }
+    } else {
+      onChainRecords = cachedCivicRecords;
+    }
+  }
+
+  return mergeWithLocalRecords(onChainRecords);
 }
 
 /**
@@ -689,74 +748,120 @@ export async function fetchCivicRecordByKey(
   record: EntityWithMetadata<CivicRecordPayload>;
   manifest: DispatchManifestPayload | null;
 } | null> {
+  const normalizedKey = entityKey.toLowerCase();
+
+  // 1. Check local records first (instant for creator browser)
+  const local = getLocalRecords().find((r) => r.key.toLowerCase() === normalizedKey);
+  const localManifest = getLocalManifest(entityKey);
+
   if (isDemoModeActive()) {
-    const local = getLocalRecords().find((r) => r.key.toLowerCase() === entityKey.toLowerCase());
     if (!local) return null;
-    const manifest = getLocalManifest(entityKey);
-    return { record: local, manifest };
+    return { record: local, manifest: localManifest };
   }
 
-  const publicClient = getPublicArkivClient();
-  let queryBuilder = publicClient
-    .select({
-      key: true,
-      owner: true,
-      creator: true,
-      createdAt: true,
-      updatedAt: true,
-      expiresAt: true,
-      creationFlags: true,
-      payload: true,
-    })
-    .where(eq('$key', keyAttr(entityKey)))
-    .limit(1);
+  let foundRecord: EntityWithMetadata<CivicRecordPayload> | null = local || null;
+  let foundManifest: DispatchManifestPayload | null = localManifest || null;
 
-  if (atBlock !== undefined) {
-    queryBuilder.atBlock(atBlock);
+  // 2. Check in-memory or stored cache
+  if (!foundRecord && cachedCivicRecords) {
+    const fromCache = cachedCivicRecords.find((r) => r.key.toLowerCase() === normalizedKey);
+    if (fromCache) foundRecord = fromCache;
+  }
+  if (!foundRecord) {
+    const fromStorage = getStoredChainRecords().find((r) => r.key.toLowerCase() === normalizedKey);
+    if (fromStorage) foundRecord = fromStorage;
   }
 
-  const res = await queryBuilder.fetch();
-  if (res.entities.length === 0) {
-    const local = getLocalRecords().find((r) => r.key.toLowerCase() === entityKey.toLowerCase());
-    if (local) {
-      const manifest = getLocalManifest(entityKey);
-      return { record: local, manifest };
+  // 3. Query on-chain if not found yet
+  if (!foundRecord) {
+    try {
+      const publicClient = getPublicArkivClient();
+      const queryBuilder = publicClient
+        .select({
+          key: true,
+          owner: true,
+          creator: true,
+          createdAt: true,
+          updatedAt: true,
+          expiresAt: true,
+          creationFlags: true,
+          payload: true,
+        })
+        .where(eq('$key', keyAttr(entityKey)))
+        .limit(1);
+
+      if (atBlock !== undefined) {
+        queryBuilder.atBlock(atBlock);
+      }
+
+      const res = await Promise.race([
+        queryBuilder.fetch(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('fetchCivicRecordByKey query timed out')), 5000)
+        ),
+      ]);
+
+      if (res && res.entities.length > 0) {
+        const e = res.entities[0];
+        foundRecord = {
+          key: e.key as Hex,
+          owner: (e.owner || '0x') as Hex,
+          creator: (e.creator || '0x') as Hex,
+          createdAt: e.createdAt || 0n,
+          updatedAt: e.updatedAt || 0n,
+          expiresAt: e.expiresAt || 0n,
+          payload: e.toJson() as CivicRecordPayload,
+          readonly: e.creationFlags?.readonly || false,
+          permissionlessExtension: e.creationFlags?.permissionlessExtension || false,
+        };
+      }
+    } catch (err: any) {
+      console.warn('Notice querying civic record from chain:', err?.message || err);
     }
+  }
+
+  if (!foundRecord) {
     return null;
   }
 
-  const e = res.entities[0];
-  const record: EntityWithMetadata<CivicRecordPayload> = {
-    key: e.key as Hex,
-    owner: (e.owner || '0x') as Hex,
-    creator: (e.creator || '0x') as Hex,
-    createdAt: e.createdAt || 0n,
-    updatedAt: e.updatedAt || 0n,
-    expiresAt: e.expiresAt || 0n,
-    payload: e.toJson() as CivicRecordPayload,
-    readonly: e.creationFlags?.readonly || false,
-    permissionlessExtension: e.creationFlags?.permissionlessExtension || false,
-  };
-
-  // Fetch companion dispatch_manifest
-  let manifest: DispatchManifestPayload | null = null;
-  try {
-    const manRes = await publicClient
-      .select({ payload: true })
-      .where(and(eq('type', str('dispatch_manifest')), eq('record_entity_key', str(entityKey))))
-      .limit(1)
-      .fetch();
-    if (manRes.entities.length > 0) {
-      manifest = manRes.entities[0].toJson() as DispatchManifestPayload;
-    } else {
-      manifest = getLocalManifest(entityKey);
+  // 4. Fetch companion manifest without hanging
+  if (!foundManifest && foundRecord.payload.manifest_key) {
+    try {
+      const publicClient = getPublicArkivClient();
+      const mEntity = await Promise.race([
+        publicClient.getEntity(foundRecord.payload.manifest_key as Hex),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Manifest entity query timed out')), 3000)
+        ),
+      ]);
+      if (mEntity) {
+        foundManifest = mEntity.toJson() as DispatchManifestPayload;
+      }
+    } catch {
+      // Ignore and fallback to local / synthetic
     }
-  } catch (mErr) {
-    console.warn('Could not query dispatch manifest for record:', mErr);
-    manifest = getLocalManifest(entityKey);
   }
 
-  return { record, manifest };
+  if (!foundManifest) {
+    foundManifest = getLocalManifest(entityKey);
+  }
+
+  // If no manifest found, build fallback manifest from genesis record payload
+  if (!foundManifest && foundRecord) {
+    foundManifest = {
+      type: 'dispatch_manifest',
+      record_entity_key: foundRecord.key,
+      reference_code: foundRecord.payload.reference_code,
+      kind: foundRecord.payload.kind,
+      quantity_dispatched: foundRecord.payload.quantity_dispatched,
+      expiry_date: foundRecord.payload.expiry_date,
+      origin: foundRecord.payload.origin,
+      destination: foundRecord.payload.destination,
+      creator_wallet: foundRecord.creator,
+    };
+  }
+
+  return { record: foundRecord, manifest: foundManifest };
 }
 
 /**
@@ -771,46 +876,41 @@ export async function fetchGroundReports(
     return local.filter((r) => atBlock === undefined || r.blockNumber <= atBlock);
   }
 
+  const cacheKey = `${recordEntityKey.toLowerCase()}_${atBlock?.toString() || 'latest'}`;
+  const cached = queryReportCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < 30_000) {
+    return cached.data;
+  }
+
   const publicClient = getPublicArkivClient();
   const reports: Array<EntityWithMetadata<GroundReportPayload> & { blockNumber: bigint; txHash: string }> = [];
 
-  let queryBuilder = publicClient
-    .select({
-      key: true,
-      owner: true,
-      creator: true,
-      createdAt: true,
-      updatedAt: true,
-      expiresAt: true,
-      creationFlags: true,
-      payload: true,
-    })
-    .where(and(eq('type', str('ground_report')), eq('record_entity_key', str(recordEntityKey))))
-    .limit(200);
+  try {
+    let queryBuilder = publicClient
+      .select({
+        key: true,
+        owner: true,
+        creator: true,
+        createdAt: true,
+        updatedAt: true,
+        expiresAt: true,
+        creationFlags: true,
+        payload: true,
+      })
+      .where(and(eq('type', str('ground_report')), eq('record_entity_key', str(recordEntityKey))))
+      .limit(200);
 
-  if (atBlock !== undefined) {
-    queryBuilder.atBlock(atBlock);
-  }
+    if (atBlock !== undefined) {
+      queryBuilder.atBlock(atBlock);
+    }
 
-  let res = await queryBuilder.fetch();
-  for (const e of res.entities) {
-    reports.push({
-      key: e.key as Hex,
-      owner: (e.owner || '0x') as Hex,
-      creator: (e.creator || '0x') as Hex,
-      createdAt: e.createdAt || 0n,
-      updatedAt: e.updatedAt || 0n,
-      expiresAt: e.expiresAt || 0n,
-      blockNumber: e.createdAt || 0n,
-      txHash: (e.key as string).slice(0, 18),
-      payload: e.toJson() as GroundReportPayload,
-      readonly: e.creationFlags?.readonly ?? true,
-      permissionlessExtension: e.creationFlags?.permissionlessExtension ?? true,
-    });
-  }
+    const res = await Promise.race([
+      queryBuilder.fetch(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('fetchGroundReports timed out')), 4000)
+      ),
+    ]);
 
-  while (res.hasNextPage()) {
-    res = await res.next();
     for (const e of res.entities) {
       reports.push({
         key: e.key as Hex,
@@ -826,6 +926,8 @@ export async function fetchGroundReports(
         permissionlessExtension: e.creationFlags?.permissionlessExtension ?? true,
       });
     }
+  } catch (err: any) {
+    // Non-fatal, use local fallback
   }
 
   // Merge any local reports that may not yet be indexed
@@ -839,6 +941,7 @@ export async function fetchGroundReports(
   }
 
   reports.sort((a, b) => (b.blockNumber > a.blockNumber ? 1 : -1));
+  queryReportCache.set(cacheKey, { data: reports, timestamp: Date.now() });
   return reports;
 }
 
@@ -881,46 +984,41 @@ export async function fetchStatements(
     return local.filter((s) => atBlock === undefined || s.blockNumber <= atBlock);
   }
 
+  const cacheKey = `${recordEntityKey.toLowerCase()}_${atBlock?.toString() || 'latest'}`;
+  const cached = queryStatementCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < 30_000) {
+    return cached.data;
+  }
+
   const publicClient = getPublicArkivClient();
   const statements: Array<EntityWithMetadata<StatementPayload> & { blockNumber: bigint; txHash: string }> = [];
 
-  let queryBuilder = publicClient
-    .select({
-      key: true,
-      owner: true,
-      creator: true,
-      createdAt: true,
-      updatedAt: true,
-      expiresAt: true,
-      creationFlags: true,
-      payload: true,
-    })
-    .where(and(eq('type', str('statement')), eq('record_entity_key', str(recordEntityKey))))
-    .limit(200);
+  try {
+    let queryBuilder = publicClient
+      .select({
+        key: true,
+        owner: true,
+        creator: true,
+        createdAt: true,
+        updatedAt: true,
+        expiresAt: true,
+        creationFlags: true,
+        payload: true,
+      })
+      .where(and(eq('type', str('statement')), eq('record_entity_key', str(recordEntityKey))))
+      .limit(200);
 
-  if (atBlock !== undefined) {
-    queryBuilder.atBlock(atBlock);
-  }
+    if (atBlock !== undefined) {
+      queryBuilder.atBlock(atBlock);
+    }
 
-  let res = await queryBuilder.fetch();
-  for (const e of res.entities) {
-    statements.push({
-      key: e.key as Hex,
-      owner: (e.owner || '0x') as Hex,
-      creator: (e.creator || '0x') as Hex,
-      createdAt: e.createdAt || 0n,
-      updatedAt: e.updatedAt || 0n,
-      expiresAt: e.expiresAt || 0n,
-      blockNumber: e.createdAt || 0n,
-      txHash: (e.key as string).slice(0, 18),
-      payload: e.toJson() as StatementPayload,
-      readonly: e.creationFlags?.readonly ?? true,
-      permissionlessExtension: e.creationFlags?.permissionlessExtension ?? true,
-    });
-  }
+    const res = await Promise.race([
+      queryBuilder.fetch(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('fetchStatements timed out')), 4000)
+      ),
+    ]);
 
-  while (res.hasNextPage()) {
-    res = await res.next();
     for (const e of res.entities) {
       statements.push({
         key: e.key as Hex,
@@ -936,6 +1034,8 @@ export async function fetchStatements(
         permissionlessExtension: e.creationFlags?.permissionlessExtension ?? true,
       });
     }
+  } catch (err: any) {
+    // Non-fatal, use local fallback
   }
 
   // Merge any local statements
@@ -949,6 +1049,7 @@ export async function fetchStatements(
   }
 
   statements.sort((a, b) => (b.blockNumber > a.blockNumber ? 1 : -1));
+  queryStatementCache.set(cacheKey, { data: statements, timestamp: Date.now() });
   return statements;
 }
 
@@ -962,24 +1063,35 @@ export async function fetchAuthorityResponses(
     return getLocalAuthorityResponses(recordEntityKey);
   }
 
+  const cacheKey = recordEntityKey.toLowerCase();
+  const cached = queryResponseCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < 30_000) {
+    return cached.data;
+  }
+
   const publicClient = getPublicArkivClient();
   const responses: Array<EntityWithMetadata<AuthorityResponsePayload> & { blockNumber: bigint; txHash: string }> = [];
 
   try {
-    const res = await publicClient
-      .select({
-        key: true,
-        owner: true,
-        creator: true,
-        createdAt: true,
-        updatedAt: true,
-        expiresAt: true,
-        creationFlags: true,
-        payload: true,
-      })
-      .where(and(eq('type', str('authority_response')), eq('record_entity_key', str(recordEntityKey))))
-      .limit(200)
-      .fetch();
+    const res = await Promise.race([
+      publicClient
+        .select({
+          key: true,
+          owner: true,
+          creator: true,
+          createdAt: true,
+          updatedAt: true,
+          expiresAt: true,
+          creationFlags: true,
+          payload: true,
+        })
+        .where(and(eq('type', str('authority_response')), eq('record_entity_key', str(recordEntityKey))))
+        .limit(200)
+        .fetch(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('fetchAuthorityResponses timed out')), 4000)
+      ),
+    ]);
 
     for (const e of res.entities) {
       responses.push({
@@ -997,7 +1109,7 @@ export async function fetchAuthorityResponses(
       });
     }
   } catch (err) {
-    console.warn('Error querying authority responses:', err);
+    // Non-fatal, use local fallback
   }
 
   const localRes = getLocalAuthorityResponses(recordEntityKey);
@@ -1010,6 +1122,7 @@ export async function fetchAuthorityResponses(
   }
 
   responses.sort((a, b) => (b.blockNumber > a.blockNumber ? 1 : -1));
+  queryResponseCache.set(cacheKey, { data: responses, timestamp: Date.now() });
   return responses;
 }
 

@@ -51,32 +51,42 @@ export default function RecordsDashboardPage() {
       let coverUpCount = 0;
       const metaMap: Record<string, { reportCount: number; maxSeverity: number; isCoverUp: boolean }> = {};
 
-      for (const r of fetched) {
-        const reps = await fetchGroundReports(r.key);
-        totalReps += reps.length;
-        const maxSev = reps.reduce((max, rep) => Math.max(max, rep.payload.severity || 0), 0);
+      await Promise.allSettled(
+        fetched.map(async (r) => {
+          try {
+            const reps = await fetchGroundReports(r.key);
+            totalReps += reps.length;
+            const maxSev = reps.reduce((max, rep) => Math.max(max, rep.payload.severity || 0), 0);
 
-        const detection = detectCoverUp({
-          currentRecord: r.payload,
-          manifest: null,
-          reports: reps.map((rp) => ({
-            key: rp.key,
-            blockNumber: rp.createdAt,
-            txHash: (rp as any).txHash || '',
-            creator: rp.creator || '0x0',
-            payload: rp.payload,
-          })),
-          revisions: [],
-        });
+            const detection = detectCoverUp({
+              currentRecord: r.payload,
+              manifest: null,
+              reports: reps.map((rp) => ({
+                key: rp.key,
+                blockNumber: rp.createdAt,
+                txHash: (rp as any).txHash || '',
+                creator: rp.creator || '0x0',
+                payload: rp.payload,
+              })),
+              revisions: [],
+            });
 
-        if (detection.isCoverUp) coverUpCount++;
+            if (detection.isCoverUp) coverUpCount++;
 
-        metaMap[r.key] = {
-          reportCount: reps.length,
-          maxSeverity: maxSev,
-          isCoverUp: detection.isCoverUp,
-        };
-      }
+            metaMap[r.key] = {
+              reportCount: reps.length,
+              maxSeverity: maxSev,
+              isCoverUp: detection.isCoverUp,
+            };
+          } catch {
+            metaMap[r.key] = {
+              reportCount: 0,
+              maxSeverity: 0,
+              isCoverUp: false,
+            };
+          }
+        })
+      );
 
       setRecordMeta(metaMap);
       setStats({

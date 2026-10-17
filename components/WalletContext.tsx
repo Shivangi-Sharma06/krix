@@ -174,11 +174,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const addressRef = React.useRef<Hex | null>(address);
+  addressRef.current = address;
+
   useEffect(() => {
     const demoMode = isDemoModeActive();
     setShowDemoSwitcher(demoMode);
 
-    if (demoMode && !address) {
+    if (demoMode && !addressRef.current) {
       setAddress(PRESET_WALLETS[2].address);
       setActiveDemoWallet(PRESET_WALLETS[2]);
       setBalanceGlm('12.50');
@@ -209,9 +212,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       // Listen for account and chain change events (Item 8)
       const handleAccountsChanged = (accounts: string[]) => {
         if (accounts.length > 0) {
-          setAddress(accounts[0] as Hex);
+          const newAddr = accounts[0] as Hex;
+          setAddress(newAddr);
           setActiveDemoWallet(null);
-          fetchBalance(accounts[0]);
+          fetchBalance(newAddr);
         } else {
           setAddress(null);
           setActiveDemoWallet(null);
@@ -222,7 +226,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const handleChainChanged = (chainId: string) => {
         const correct = isTiramisuChain(chainId);
         setIsCorrectNetwork(correct);
-        if (address) fetchBalance(address);
+        if (addressRef.current) fetchBalance(addressRef.current);
       };
 
       ethereum.on?.('accountsChanged', handleAccountsChanged);
@@ -231,8 +235,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       // Check current accounts on mount
       ethereum.request?.({ method: 'eth_accounts' }).then((accounts: string[]) => {
         if (accounts && accounts[0]) {
-          setAddress(accounts[0] as Hex);
-          fetchBalance(accounts[0]);
+          const initialAddr = accounts[0] as Hex;
+          setAddress(initialAddr);
+          fetchBalance(initialAddr);
           // Check and auto-switch chain if account is already connected
           ethereum.request?.({ method: 'eth_chainId' }).then((chainId: string) => {
             const correct = isTiramisuChain(chainId);
@@ -251,7 +256,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         }).catch(() => {});
       };
       checkChain();
-      const interval = setInterval(checkChain, 5000);
+      const interval = setInterval(checkChain, 10000);
 
       return () => {
         clearInterval(interval);
@@ -259,7 +264,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         ethereum.removeListener?.('chainChanged', handleChainChanged);
       };
     }
-  }, [address]);
+  }, []);
 
   const connectMetaMask = async () => {
     if (typeof window === 'undefined' || !(window as any).ethereum) {

@@ -30,23 +30,30 @@ export default function AuthorityPage() {
         const complaintsMap: Record<string, number> = {};
         const contradictionsMap: Record<string, boolean> = {};
 
-        for (const r of data) {
-          const reps = await fetchGroundReports(r.key);
-          complaintsMap[r.key] = reps.length;
-          const detection = detectCoverUp({
-            currentRecord: r.payload,
-            manifest: null,
-            reports: reps.map((rp) => ({
-              key: rp.key,
-              blockNumber: rp.createdAt,
-              txHash: (rp as any).txHash || '',
-              creator: rp.creator || '0x0',
-              payload: rp.payload,
-            })),
-            revisions: [],
-          });
-          contradictionsMap[r.key] = detection.isCoverUp;
-        }
+        await Promise.allSettled(
+          data.map(async (r) => {
+            try {
+              const reps = await fetchGroundReports(r.key);
+              complaintsMap[r.key] = reps.length;
+              const detection = detectCoverUp({
+                currentRecord: r.payload,
+                manifest: null,
+                reports: reps.map((rp) => ({
+                  key: rp.key,
+                  blockNumber: rp.createdAt,
+                  txHash: (rp as any).txHash || '',
+                  creator: rp.creator || '0x0',
+                  payload: rp.payload,
+                })),
+                revisions: [],
+              });
+              contradictionsMap[r.key] = detection.isCoverUp;
+            } catch {
+              complaintsMap[r.key] = 0;
+              contradictionsMap[r.key] = false;
+            }
+          })
+        );
 
         setRecordComplaints(complaintsMap);
         setContradictions(contradictionsMap);

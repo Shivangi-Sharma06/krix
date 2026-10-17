@@ -103,6 +103,33 @@ export default function CitizenPromisePage({ params }: { params: Promise<{ promi
     loadData();
   }, [rawKey]);
 
+  if (loading) {
+    return (
+      <div className="app-container" style={{ maxWidth: '1040px', paddingTop: '32px', paddingBottom: '80px' }}>
+        <div className="skeleton" style={{ height: '32px', width: '220px', marginBottom: '16px' }} />
+        <div className="skeleton" style={{ height: '140px', width: '100%', marginBottom: '24px' }} />
+        <div className="skeleton" style={{ height: '320px', width: '100%' }} />
+      </div>
+    );
+  }
+
+  if (!recordMeta) {
+    return (
+      <div className="app-container" style={{ textAlign: 'center', paddingTop: '80px' }}>
+        <div className="card" style={{ maxWidth: '520px', margin: '0 auto', padding: '36px' }}>
+          <div className="eyebrow" style={{ color: 'var(--text-faint)' }}>NOT FOUND ON CHAIN</div>
+          <h2 style={{ fontSize: '24px', fontWeight: 600, margin: '0 0 12px 0' }}>Promise Record Not Found</h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: '15px', lineHeight: 1.6, marginBottom: '24px' }}>
+            {errorMessage || `No promise found on blockchain for key ${rawKey.slice(0, 16)}...`}
+          </p>
+          <Link href="/citizen" className="btn btn-primary btn-md">
+            Return to Citizen Portal
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-container" style={{ maxWidth: '1040px', paddingTop: '32px', paddingBottom: '80px' }}>
       {/* Breadcrumb Navigation */}
