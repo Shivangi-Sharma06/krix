@@ -29,9 +29,9 @@ export function SubmitReportModal({
 }: SubmitReportModalProps) {
   const { getArkivClient, address, isConnected, isCorrectNetwork, switchNetwork, userRole } = useWallet();
 
-  const [verdict, setVerdict] = useState<GroundReportVerdict>('DAMAGED');
-  const [severity, setSeverity] = useState<number>(8);
-  const [countReceived, setCountReceived] = useState<number>(300);
+  const [verdict, setVerdict] = useState<GroundReportVerdict>('ALL_GOOD');
+  const [severity, setSeverity] = useState<number>(1);
+  const [countReceived, setCountReceived] = useState<number>(500);
   const [description, setDescription] = useState<string>('');
   const [reporterRole, setReporterRole] = useState<ReporterRole>('DOCTOR');
   const [photos, setPhotos] = useState<string[]>([]);
@@ -307,14 +307,22 @@ export function SubmitReportModal({
               </label>
               <select
                 value={verdict}
-                onChange={(e) => setVerdict(e.target.value as GroundReportVerdict)}
+                onChange={(e) => {
+                  const newVerdict = e.target.value as GroundReportVerdict;
+                  setVerdict(newVerdict);
+                  if (newVerdict === 'ALL_GOOD' && severity > 3) {
+                    setSeverity(1);
+                  } else if (newVerdict !== 'ALL_GOOD' && severity === 1) {
+                    setSeverity(7);
+                  }
+                }}
                 style={{ width: '100%', height: '38px' }}
               >
+                <option value="ALL_GOOD">All Good / Compliant</option>
                 <option value="DAMAGED">Damaged Goods / Broken Seals</option>
                 <option value="EXPIRED">Expired Medicines</option>
                 <option value="SHORT_QUANTITY">Short Quantity Received</option>
                 <option value="NOT_RECEIVED">Not Received at Clinic</option>
-                <option value="ALL_GOOD">All Good / Compliant</option>
               </select>
             </div>
 
