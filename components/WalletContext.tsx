@@ -44,7 +44,7 @@ export const PRESET_WALLETS: DemoWallet[] = [
   },
 ];
 
-export type UserRole = 'citizen' | 'authority' | null;
+export type UserRole = 'citizen' | 'authority' | 'party' | null;
 
 interface WalletContextType {
   address: Hex | null;

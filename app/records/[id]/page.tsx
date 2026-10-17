@@ -6,6 +6,8 @@ import { useWallet } from '@/components/WalletContext';
 import {
   fetchCivicRecordByKey,
   fetchGroundReports,
+  fetchStatements,
+  fetchAuthorityResponses,
   fetchRecordRevisions,
   patchCivicRecordOnChain,
   changeRecordCustodyOnChain,
@@ -18,18 +20,22 @@ import {
 import type {
   CivicRecordPayload,
   GroundReportPayload,
+  StatementPayload,
+  AuthorityResponsePayload,
   DispatchManifestPayload,
   RecordRevision,
   CustodyHop,
   CoverUpDetectionResult,
+  ClaimsLadderResult,
   CivicRecordStatus,
 } from '@/lib/types';
-import { detectCoverUp } from '@/lib/detect';
+import { detectCoverUp, buildClaimsLadder } from '@/lib/detect';
 import { getIpfsGatewayUrls } from '@/lib/ipfs';
 import { isDemoModeActive } from '@/lib/config';
 import { SubmitReportModal } from '@/components/SubmitReportModal';
 import { TimeTravelSlider } from '@/components/TimeTravelSlider';
 import { CoverUpAlert } from '@/components/CoverUpAlert';
+import { ClaimsLadder } from '@/components/ClaimsLadder';
 import { type Hex, getAddress, isAddress } from 'viem';
 
 export default function RecordDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -45,6 +51,13 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
   const [reports, setReports] = useState<
     Array<EntityWithMetadata<GroundReportPayload> & { blockNumber: bigint; txHash: string }>
   >([]);
+  const [statements, setStatements] = useState<
+    Array<EntityWithMetadata<StatementPayload> & { blockNumber: bigint; txHash: string }>
+  >([]);
+  const [authorityResponses, setAuthorityResponses] = useState<
+    Array<EntityWithMetadata<AuthorityResponsePayload> & { blockNumber: bigint; txHash: string }>
+  >([]);
+  const [claimsLadderData, setClaimsLadderData] = useState<ClaimsLadderResult | null>(null);
   const [revisions, setRevisions] = useState<RecordRevision[]>([]);
   const [custodyChain, setCustodyChain] = useState<CustodyHop[]>([]);
 
@@ -98,21 +111,74 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
       setManifest(data.manifest);
       setNewQuantityReceived(data.record.payload.quantity_received || 0);
 
-      const [reps, revsData] = await Promise.all([
+      const [reps, stmts, revsData, resps] = await Promise.all([
         fetchGroundReports(rawKey as Hex),
+        fetchStatements(rawKey as Hex),
         fetchRecordRevisions(rawKey as Hex),
+        fetchAuthorityResponses(rawKey as Hex),
       ]);
 
-      setReports(
-        reps.map((r) => ({
-          ...r,
-          blockNumber: r.createdAt,
-          txHash: (r as any).txHash || '',
-        }))
-      );
+      const mappedReports = reps.map((r) => ({
+        ...r,
+        blockNumber: r.createdAt,
+        txHash: (r as any).txHash || '',
+      }));
 
+      const mappedStatements = stmts.map((s) => ({
+        ...s,
+        blockNumber: s.createdAt,
+        txHash: (s as any).txHash || '',
+      }));
+
+      const mappedResponses = resps.map((res) => ({
+        ...res,
+        blockNumber: res.createdAt,
+        txHash: (res as any).txHash || '',
+      }));
+
+      setReports(mappedReports);
+      setStatements(mappedStatements);
+      setAuthorityResponses(mappedResponses);
       setRevisions(revsData.revisions);
       setCustodyChain(revsData.custodyChain);
+
+      // Build Claims Ladder
+      const allCust = [
+        data.record.owner,
+        data.record.creator,
+        ...revsData.custodyChain.map((h) => h.wallet),
+      ];
+
+      const ladder = buildClaimsLadder({
+        currentRecord: data.record.payload,
+        recordCreatedAtBlock: data.record.createdAt,
+        recordCreatorWallet: data.record.creator,
+        revisions: revsData.revisions,
+        reports: mappedReports.map((r) => ({
+          key: r.key,
+          blockNumber: r.blockNumber,
+          txHash: r.txHash,
+          creator: r.creator || '0x0',
+          payload: r.payload,
+        })),
+        statements: mappedStatements.map((s) => ({
+          key: s.key,
+          blockNumber: s.blockNumber,
+          txHash: s.txHash,
+          creator: s.creator || '0x0',
+          payload: s.payload,
+        })),
+        responses: mappedResponses.map((res) => ({
+          key: res.key,
+          blockNumber: res.blockNumber,
+          txHash: res.txHash,
+          creator: res.creator || '0x0',
+          payload: res.payload,
+        })),
+        custodianWallets: allCust,
+      });
+
+      setClaimsLadderData(ladder);
     } catch (err: any) {
       console.error('Error loading record details:', err);
       setErrorMessage(err?.message || 'Failed to load record details from chain.');
@@ -324,6 +390,29 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
         tx_hash: r.txHash,
         payload: r.payload,
       })),
+      statements: statements.map((s) => ({
+        entity_key: s.key,
+        signer_wallet: s.creator,
+        block: s.blockNumber.toString(),
+        tx_hash: s.txHash,
+        payload: s.payload,
+      })),
+      authority_responses: authorityResponses.map((res) => ({
+        entity_key: res.key,
+        signer_wallet: res.creator,
+        block: res.blockNumber.toString(),
+        tx_hash: res.txHash,
+        payload: res.payload,
+      })),
+      claims_ladder: claimsLadderData
+        ? {
+            findings: claimsLadderData.findings,
+            unique_independent_wallets: claimsLadderData.uniqueIndependentWallets,
+            total_statements: claimsLadderData.totalStatements,
+            total_citizen_reports: claimsLadderData.totalCitizenReports,
+            disclaimer: claimsLadderData.disclaimer,
+          }
+        : null,
       detection_result: detectionResult,
     };
 
@@ -622,6 +711,11 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
             onDetectClick={handleRunCoverUpDetection}
             loading={detecting}
           />
+
+          {/* Claims Ladder (Chronological side-by-side ledger) */}
+          {claimsLadderData && (
+            <ClaimsLadder ladder={claimsLadderData} loading={loading} />
+          )}
 
           {/* Reports List */}
           <div

@@ -211,8 +211,8 @@ export default function AuthorityPage() {
                       Destination: {record.payload.destination} &bull; Dispatched: {record.payload.quantity_dispatched}
                     </div>
                   </div>
-                  <Link href={`/records/${record.key}`} className="btn btn-primary btn-md">
-                    Manage Custody &rarr;
+                  <Link href={`/authority/promise/${record.key}`} className="btn btn-primary btn-md">
+                    Manage &amp; Respond &rarr;
                   </Link>
                 </div>
               ))}
@@ -274,8 +274,8 @@ export default function AuthorityPage() {
                     </div>
                   </div>
 
-                  <Link href={`/records/${record.key}`} className="btn btn-secondary btn-md" style={{ fontSize: '13px' }}>
-                    Inspect &rarr;
+                  <Link href={`/authority/promise/${record.key}`} className="btn btn-secondary btn-md" style={{ fontSize: '13px' }}>
+                    Inspect &amp; Reply &rarr;
                   </Link>
                 </div>
               );

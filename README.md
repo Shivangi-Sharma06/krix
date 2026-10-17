@@ -80,3 +80,33 @@ App runs at: **`http://localhost:3000`**
 | 11 | **Security & Error Handling** | **FIXED** | Content Security Policy in `next.config.js` permitting self, Tiramisu RPC, and IPFS gateways. Zod validation schema in `lib/config.ts`. Friendly error pages (`app/not-found.tsx`, `app/error.tsx`). `SEED_PRIVATE_KEY` restricted to server-side scripts. |
 | 12 | **Documentation & Hindi Support** | **FIXED** | Interactive `/how-it-works` page explaining the 3 modules with an English / Hindi toggle. |
 | 13 | **Seed Script Idempotency** | **FIXED** | `scripts/seed.ts` queries existing records by reference code before creating duplicates. Checks live `$GLM` balance and logs faucet URL. Prints transaction hashes and canonical entity key URLs for all steps. |
+
+---
+
+## 5. Claims Ladder & Intermediary Statements
+
+Krix provides separate entities, validation endpoints, and workflows for each role:
+- **Citizens:** Submit eyewitness reports and complaints with photo proofs (`ground_report`, `readonly: true`, `permissionlessExtension: true`).
+- **Intermediaries / Facility Parties:** Submit operational delivery statements at `/party` and `/party/promise/[promiseKey]` (`statement`, `readonly: true`, `permissionlessExtension: true`). These include self-declared party type (`TRANSPORT`, `DISTRIBUTOR`, `FACILITY_STAFF`, `OTHER`), checkpoint location labels from the promise's village list or `"in transit"`, optional received/passed-on counts, condition (`OK`, `DAMAGED`, `EXPIRED`, `SHORT`, `DELAYED`), and up to 3 EXIF-stripped IPFS photos.
+- **Authorities:** Create delivery promises, update transit status, and publish formal readonly responses (`authority_response`) directly referencing a complaint or statement key.
+
+### Claims Ladder
+A chronological, side-by-side ledger ordered by block number that reveals discrepancies without subjective accusation:
+- **"Numbers differ":** Flags when a later statement's received count drops below an earlier count without an explanatory statement or response on record.
+- **"No statement from any party":** Flags when the authority claims a batch is delivered but zero intermediary statements and zero independent citizen reports exist.
+- **"Condition contradiction":** Flags when the authority claims delivered while statements record damage or shortage.
+- **"Delay contradiction":** Flags when a statement indicates delay after delivery was claimed.
+- **Deduplication:** Counts unique independent wallets. Reports or statements from authority wallets or repeat wallets are labelled and excluded from independent counts.
+
+---
+
+## 6. What Krix Can and Cannot Prove
+
+> **Disclaimer:** *Krix shows where claims disagree. It cannot prove where goods were lost or who is responsible.*
+
+| What Krix CAN Prove | What Krix CANNOT Prove |
+|---|---|
+| **Exact Chronological Sequence:** Cryptographic proof of what claim was made at what exact block number. | **Where Goods Were Lost:** Krix does not track GPS trucks or custody tokens for physical goods. |
+| **Tamper-Evidence:** Proof that an official status was altered or that citizen/intermediary claims were submitted and never deleted. | **Who Stole or Damaged Goods:** Krix does not identify culprit individuals; it records on-chain claims from pseudonymous wallets. |
+| **Mathematical & Verbal Contradiction:** Automatically flags when counts drop unexpectedly or when an official marks "Delivered" despite zero eyewitness confirmation. | **Real-World Identity:** Reporter and party roles are self-declared. Anyone can sign; Krix displays them as claims rather than verified credentials. |
+

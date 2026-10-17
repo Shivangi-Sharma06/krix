@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectCoverUp, type DetectionInput } from './detect';
+import { detectCoverUp, buildClaimsLadder, type DetectionInput } from './detect';
 import type { CivicRecordPayload, RecordRevision, GroundReportPayload, DispatchManifestPayload } from './types';
 
 const baseRecord: CivicRecordPayload = {
@@ -332,5 +332,385 @@ describe('Detection Engine Hardening (lib/detect.ts)', () => {
     expect(res.hasTampering).toBe(false);
     expect(res.score).toBeLessThan(50);
     expect(res.evidences.length).toBe(0);
+  });
+});
+
+describe('Claims Ladder Detection Rules (lib/detect.ts -> buildClaimsLadder)', () => {
+  it('1. Matching counts produce no numbers-differ flag', () => {
+    const ladder = buildClaimsLadder({
+      currentRecord: { ...baseRecord, status: 'IN_TRANSIT' },
+      recordCreatedAtBlock: 100n,
+      recordCreatorWallet: '0xaaaa',
+      revisions: [baseRevisions[0]],
+      reports: [],
+      statements: [
+        {
+          key: '0xst1',
+          blockNumber: 110n,
+          txHash: '0xstx1',
+          creator: '0xdistributor',
+          payload: {
+            type: 'statement',
+            record_entity_key: '0xrec' as any,
+            party_type: 'DISTRIBUTOR',
+            location: 'in transit',
+            received_count: 500,
+            passed_on_count: 500,
+            condition: 'OK',
+            note: 'All 500 items accounted for',
+            photo_cids: [],
+          },
+        },
+        {
+          key: '0xst2',
+          blockNumber: 120n,
+          txHash: '0xstx2',
+          creator: '0xclinic',
+          payload: {
+            type: 'statement',
+            record_entity_key: '0xrec' as any,
+            party_type: 'FACILITY_STAFF',
+            location: 'PHC Mangalagiri',
+            received_count: 500,
+            condition: 'OK',
+            note: 'All 500 received in clinic',
+            photo_cids: [],
+          },
+        },
+      ],
+    });
+
+    const numberDiffFindings = ladder.findings.filter((f) => f.type === 'NUMBERS_DIFFER');
+    expect(numberDiffFindings.length).toBe(0);
+  });
+
+  it('2. Count drop without explanation flags "numbers differ"', () => {
+    const ladder = buildClaimsLadder({
+      currentRecord: { ...baseRecord, status: 'IN_TRANSIT' },
+      recordCreatedAtBlock: 100n,
+      recordCreatorWallet: '0xaaaa',
+      revisions: [baseRevisions[0]],
+      reports: [],
+      statements: [
+        {
+          key: '0xst1',
+          blockNumber: 110n,
+          txHash: '0xstx1',
+          creator: '0xdistributor',
+          payload: {
+            type: 'statement',
+            record_entity_key: '0xrec' as any,
+            party_type: 'DISTRIBUTOR',
+            location: 'in transit',
+            received_count: 500,
+            passed_on_count: 500,
+            condition: 'OK',
+            note: 'Handled 500 units',
+            photo_cids: [],
+          },
+        },
+        {
+          key: '0xst2',
+          blockNumber: 120n,
+          txHash: '0xstx2',
+          creator: '0xclinic',
+          payload: {
+            type: 'statement',
+            record_entity_key: '0xrec' as any,
+            party_type: 'FACILITY_STAFF',
+            location: 'PHC Mangalagiri',
+            received_count: 350, // 150 drop without explanation!
+            condition: 'OK',
+            note: 'Stock checked in without comment',
+            photo_cids: [],
+          },
+        },
+      ],
+    });
+
+    const numberDiffFindings = ladder.findings.filter((f) => f.type === 'NUMBERS_DIFFER');
+    expect(numberDiffFindings.length).toBe(1);
+    expect(numberDiffFindings[0].difference).toBe(150);
+    expect(numberDiffFindings[0].blockTimes?.earlierBlock).toBe(110n);
+    expect(numberDiffFindings[0].blockTimes?.laterBlock).toBe(120n);
+  });
+
+  it('3. Count drop with an explaining statement or response does NOT flag numbers differ', () => {
+    // Explanation in note
+    const ladderWithNoteExplanation = buildClaimsLadder({
+      currentRecord: { ...baseRecord, status: 'IN_TRANSIT' },
+      recordCreatedAtBlock: 100n,
+      recordCreatorWallet: '0xaaaa',
+      revisions: [baseRevisions[0]],
+      reports: [],
+      statements: [
+        {
+          key: '0xst1',
+          blockNumber: 110n,
+          txHash: '0xstx1',
+          creator: '0xdistributor',
+          payload: {
+            type: 'statement',
+            record_entity_key: '0xrec' as any,
+            party_type: 'DISTRIBUTOR',
+            location: 'in transit',
+            received_count: 500,
+            passed_on_count: 500,
+            condition: 'OK',
+            note: 'Handled 500 units',
+            photo_cids: [],
+          },
+        },
+        {
+          key: '0xst2',
+          blockNumber: 120n,
+          txHash: '0xstx2',
+          creator: '0xclinic',
+          payload: {
+            type: 'statement',
+            record_entity_key: '0xrec' as any,
+            party_type: 'FACILITY_STAFF',
+            location: 'PHC Mangalagiri',
+            received_count: 350,
+            condition: 'DAMAGED',
+            note: 'Boxes wet from rain, damage and loss of 150 vials observed',
+            photo_cids: [],
+          },
+        },
+      ],
+    });
+
+    const findingsNote = ladderWithNoteExplanation.findings.filter((f) => f.type === 'NUMBERS_DIFFER');
+    expect(findingsNote.length).toBe(0);
+
+    // Explanation via official authority response
+    const ladderWithResponseExplanation = buildClaimsLadder({
+      currentRecord: { ...baseRecord, status: 'IN_TRANSIT' },
+      recordCreatedAtBlock: 100n,
+      recordCreatorWallet: '0xaaaa',
+      revisions: [baseRevisions[0]],
+      reports: [],
+      statements: [
+        {
+          key: '0xst1',
+          blockNumber: 110n,
+          txHash: '0xstx1',
+          creator: '0xdistributor',
+          payload: {
+            type: 'statement',
+            record_entity_key: '0xrec' as any,
+            party_type: 'DISTRIBUTOR',
+            location: 'in transit',
+            received_count: 500,
+            passed_on_count: 500,
+            condition: 'OK',
+            note: 'Handled 500 units',
+            photo_cids: [],
+          },
+        },
+        {
+          key: '0xst2',
+          blockNumber: 125n,
+          txHash: '0xstx2',
+          creator: '0xclinic',
+          payload: {
+            type: 'statement',
+            record_entity_key: '0xrec' as any,
+            party_type: 'FACILITY_STAFF',
+            location: 'PHC Mangalagiri',
+            received_count: 350,
+            condition: 'OK',
+            note: 'Received batch',
+            photo_cids: [],
+          },
+        },
+      ],
+      responses: [
+        {
+          key: '0xresp1',
+          blockNumber: 122n,
+          txHash: '0xrtx1',
+          creator: '0xaaaa',
+          payload: {
+            type: 'authority_response',
+            record_entity_key: '0xrec' as any,
+            target_key: '0xst1' as any,
+            target_type: 'statement',
+            response_text: 'Transit loss of 150 units reported and replaced by sub-depot.',
+          },
+        },
+      ],
+    });
+
+    const findingsResp = ladderWithResponseExplanation.findings.filter((f) => f.type === 'NUMBERS_DIFFER');
+    expect(findingsResp.length).toBe(0);
+  });
+
+  it('4. Zero statements with a delivered claim flags "no statement from any party"', () => {
+    const ladder = buildClaimsLadder({
+      currentRecord: { ...baseRecord, status: 'DELIVERED' },
+      recordCreatedAtBlock: 100n,
+      recordCreatorWallet: '0xaaaa',
+      revisions: [
+        { blockNumber: 100n, txHash: '0x1', updater: '0xaaaa', type: 'CREATED', status: 'CREATED' },
+        { blockNumber: 120n, txHash: '0x2', updater: '0xaaaa', type: 'PATCHED', status: 'DELIVERED' },
+      ],
+      reports: [],
+      statements: [],
+    });
+
+    const noStatementFindings = ladder.findings.filter((f) => f.type === 'NO_STATEMENT');
+    expect(noStatementFindings.length).toBe(1);
+    expect(noStatementFindings[0].title).toBe('No statement from any party');
+  });
+
+  it('5. Same wallet duplicating statements is counted once in unique independent counts', () => {
+    const sameWallet = '0xoperator99';
+    const ladder = buildClaimsLadder({
+      currentRecord: { ...baseRecord, status: 'IN_TRANSIT' },
+      recordCreatedAtBlock: 100n,
+      recordCreatorWallet: '0xaaaa',
+      revisions: [baseRevisions[0]],
+      reports: [],
+      statements: [
+        {
+          key: '0xst1',
+          blockNumber: 110n,
+          txHash: '0xstx1',
+          creator: sameWallet,
+          payload: {
+            type: 'statement',
+            record_entity_key: '0xrec' as any,
+            party_type: 'TRANSPORT',
+            location: 'in transit',
+            received_count: 500,
+            condition: 'OK',
+            note: 'Hop 1',
+            photo_cids: [],
+          },
+        },
+        {
+          key: '0xst2',
+          blockNumber: 115n,
+          txHash: '0xstx2',
+          creator: sameWallet, // duplicate wallet
+          payload: {
+            type: 'statement',
+            record_entity_key: '0xrec' as any,
+            party_type: 'TRANSPORT',
+            location: 'in transit',
+            received_count: 500,
+            condition: 'OK',
+            note: 'Hop 2',
+            photo_cids: [],
+          },
+        },
+      ],
+    });
+
+    expect(ladder.totalStatements).toBe(2);
+    expect(ladder.uniqueIndependentWallets).toBe(1);
+    expect(ladder.claims.find((c) => c.id === '0xst2')?.isDuplicateWallet).toBe(true);
+  });
+
+  it('6. Authority-wallet statement is excluded and labelled', () => {
+    const authorityWallet = '0xaaaa';
+    const ladder = buildClaimsLadder({
+      currentRecord: { ...baseRecord, status: 'IN_TRANSIT' },
+      recordCreatedAtBlock: 100n,
+      recordCreatorWallet: authorityWallet,
+      custodianWallets: [authorityWallet],
+      revisions: [baseRevisions[0]],
+      reports: [],
+      statements: [
+        {
+          key: '0xst1',
+          blockNumber: 110n,
+          txHash: '0xstx1',
+          creator: authorityWallet, // Submitter is the authority!
+          payload: {
+            type: 'statement',
+            record_entity_key: '0xrec' as any,
+            party_type: 'TRANSPORT',
+            location: 'in transit',
+            received_count: 500,
+            condition: 'OK',
+            note: 'Official submitted this statement',
+            photo_cids: [],
+          },
+        },
+      ],
+    });
+
+    const stClaim = ladder.claims.find((c) => c.id === '0xst1');
+    expect(stClaim?.isAuthorityWallet).toBe(true);
+    expect(ladder.uniqueIndependentWallets).toBe(0);
+  });
+
+  it('7. Flags statement before promise existed as timeline anomaly', () => {
+    const ladder = buildClaimsLadder({
+      currentRecord: { ...baseRecord, status: 'IN_TRANSIT' },
+      recordCreatedAtBlock: 500n, // Genesis at 500
+      recordCreatorWallet: '0xaaaa',
+      revisions: [],
+      reports: [],
+      statements: [
+        {
+          key: '0xst1',
+          blockNumber: 450n, // Statement at 450 (before genesis)
+          txHash: '0xstx1',
+          creator: '0xdistributor',
+          payload: {
+            type: 'statement',
+            record_entity_key: '0xrec' as any,
+            party_type: 'DISTRIBUTOR',
+            location: 'in transit',
+            received_count: 500,
+            condition: 'OK',
+            note: 'Premature claim',
+            photo_cids: [],
+          },
+        },
+      ],
+    });
+
+    const anomaly = ladder.findings.filter((f) => f.type === 'TIMELINE_ANOMALY');
+    expect(anomaly.length).toBe(1);
+    expect(anomaly[0].title).toBe('Statement recorded before promise creation');
+    expect(anomaly[0].description).toContain('predates');
+  });
+
+  it('8. Clean record has no findings and provides the mandatory disclaimer', () => {
+    const ladder = buildClaimsLadder({
+      currentRecord: { ...baseRecord, status: 'IN_TRANSIT' },
+      recordCreatedAtBlock: 100n,
+      recordCreatorWallet: '0xaaaa',
+      revisions: [baseRevisions[0]],
+      reports: [],
+      statements: [
+        {
+          key: '0xst1',
+          blockNumber: 110n,
+          txHash: '0xstx1',
+          creator: '0xdistributor',
+          payload: {
+            type: 'statement',
+            record_entity_key: '0xrec' as any,
+            party_type: 'DISTRIBUTOR',
+            location: 'in transit',
+            received_count: 500,
+            passed_on_count: 500,
+            condition: 'OK',
+            note: 'Normal dispatch',
+            photo_cids: [],
+          },
+        },
+      ],
+    });
+
+    expect(ladder.findings.length).toBe(0);
+    expect(ladder.disclaimer).toBe(
+      'Krix shows where claims disagree. It cannot prove where goods were lost or who is responsible.'
+    );
   });
 });

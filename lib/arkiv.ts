@@ -24,6 +24,8 @@ import type {
   DispatchManifestPayload,
   RecordRevision,
   CustodyHop,
+  StatementPayload,
+  AuthorityResponsePayload,
 } from './types';
 import { envConfig, isDemoModeActive, getRpcUrls } from './config';
 
@@ -410,6 +412,151 @@ export async function submitGroundReportOnChain(
 }
 
 /**
+ * Submits an immutable statement from an intermediary or facility party (readonly: true, permissionlessExtension: true)
+ * The adapter enforces strict per-type fields and reject cross-use.
+ */
+export async function submitStatementOnChain(
+  client: WalletArkivClient,
+  statement: StatementPayload
+): Promise<{ entityKey: Hex; txHash: Hash; expiresAt: bigint }> {
+  if (statement.type !== 'statement') {
+    throw new Error('Type mismatch: Expected entity type "statement".');
+  }
+  if (!isValidEntityKey(statement.record_entity_key)) {
+    throw new Error('Invalid promise key reference.');
+  }
+
+  // Validate party_type
+  const allowedPartyTypes = ['TRANSPORT', 'DISTRIBUTOR', 'FACILITY_STAFF', 'OTHER'];
+  if (!allowedPartyTypes.includes(statement.party_type)) {
+    throw new Error(`Invalid party_type: ${statement.party_type}`);
+  }
+
+  // Validate condition
+  const allowedConditions = ['OK', 'DAMAGED', 'EXPIRED', 'SHORT', 'DELAYED'];
+  if (!allowedConditions.includes(statement.condition)) {
+    throw new Error(`Invalid condition: ${statement.condition}`);
+  }
+
+  // Validate location label (cannot be empty)
+  if (!statement.location || statement.location.trim().length === 0) {
+    throw new Error('Location is required. Must be chosen from promise village list or "in transit".');
+  }
+
+  // Validate counts
+  if (statement.received_count !== undefined && (typeof statement.received_count !== 'number' || statement.received_count < 0)) {
+    throw new Error('received_count must be an integer >= 0.');
+  }
+  if (statement.passed_on_count !== undefined && (typeof statement.passed_on_count !== 'number' || statement.passed_on_count < 0)) {
+    throw new Error('passed_on_count must be an integer >= 0.');
+  }
+
+  // Validate note
+  if (!statement.note || statement.note.length > 500) {
+    throw new Error('Statement note must be between 1 and 500 characters.');
+  }
+
+  // Validate photo CIDs
+  if (statement.photo_cids && statement.photo_cids.length > 3) {
+    throw new Error('Maximum 3 photo CIDs permitted.');
+  }
+
+  if (isDemoModeActive()) {
+    const mockKey = ('0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')) as Hex;
+    const mockTx = ('0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')) as Hash;
+    const mockExpires = BigInt(Math.floor(Date.now() / 1000) + 30 * 86400);
+
+    saveLocalStatement(mockKey, statement, (client.account?.address as Hex) || '0x', 410260n, mockTx);
+    return { entityKey: mockKey, txHash: mockTx, expiresAt: mockExpires };
+  }
+
+  const res = await client.createEntity({
+    payload: jsonToPayload(statement),
+    contentType: 'application/json',
+    attributes: {
+      type: str('statement'),
+      record_entity_key: str(statement.record_entity_key),
+      party_type: str(statement.party_type),
+      condition: str(statement.condition),
+      location: str(statement.location),
+      ...(statement.received_count !== undefined ? { received_count: i32(statement.received_count) } : {}),
+      ...(statement.passed_on_count !== undefined ? { passed_on_count: i32(statement.passed_on_count) } : {}),
+    },
+    flags: {
+      readonly: true,
+      permissionlessExtension: true,
+    },
+    expires: ExpirationTime.fromDays(30),
+  });
+
+  saveLocalStatement(
+    res.entityKey,
+    statement,
+    (client.account?.address as Hex) || '0x',
+    BigInt(Math.floor(Date.now() / 1000)),
+    res.txHash
+  );
+
+  return res;
+}
+
+/**
+ * Submits an authority response to a complaint or statement key (readonly: true, permissionlessExtension: true)
+ */
+export async function submitAuthorityResponseOnChain(
+  client: WalletArkivClient,
+  response: AuthorityResponsePayload
+): Promise<{ entityKey: Hex; txHash: Hash; expiresAt: bigint }> {
+  if (response.type !== 'authority_response') {
+    throw new Error('Type mismatch: Expected entity type "authority_response".');
+  }
+  if (!isValidEntityKey(response.record_entity_key)) {
+    throw new Error('Invalid record entity key reference.');
+  }
+  if (!isValidEntityKey(response.target_key)) {
+    throw new Error('Invalid target key reference.');
+  }
+  if (!response.response_text || response.response_text.trim().length === 0) {
+    throw new Error('Response text is required.');
+  }
+
+  if (isDemoModeActive()) {
+    const mockKey = ('0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')) as Hex;
+    const mockTx = ('0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')) as Hash;
+    const mockExpires = BigInt(Math.floor(Date.now() / 1000) + 30 * 86400);
+
+    saveLocalAuthorityResponse(mockKey, response, (client.account?.address as Hex) || '0x', 410270n, mockTx);
+    return { entityKey: mockKey, txHash: mockTx, expiresAt: mockExpires };
+  }
+
+  const res = await client.createEntity({
+    payload: jsonToPayload(response),
+    contentType: 'application/json',
+    attributes: {
+      type: str('authority_response'),
+      record_entity_key: str(response.record_entity_key),
+      target_key: str(response.target_key),
+      target_type: str(response.target_type),
+    },
+    flags: {
+      readonly: true,
+      permissionlessExtension: true,
+    },
+    expires: ExpirationTime.fromDays(30),
+  });
+
+  saveLocalAuthorityResponse(
+    res.entityKey,
+    response,
+    (client.account?.address as Hex) || '0x',
+    BigInt(Math.floor(Date.now() / 1000)),
+    res.txHash
+  );
+
+  return res;
+}
+
+/**
  * Extends the lifetime of an entity (Lifetime Extension) (Item 7)
  */
 export async function extendEntityLifetimeOnChain(
@@ -714,6 +861,150 @@ export async function fetchRecordRevisions(
   return { revisions, custodyChain };
 }
 
+/**
+ * Fetches all statements linked to recordEntityKey
+ */
+export async function fetchStatements(
+  recordEntityKey: Hex,
+  atBlock?: bigint
+): Promise<Array<EntityWithMetadata<StatementPayload> & { blockNumber: bigint; txHash: string }>> {
+  if (isDemoModeActive()) {
+    const local = getLocalStatements(recordEntityKey);
+    return local.filter((s) => atBlock === undefined || s.blockNumber <= atBlock);
+  }
+
+  const publicClient = getPublicArkivClient();
+  const statements: Array<EntityWithMetadata<StatementPayload> & { blockNumber: bigint; txHash: string }> = [];
+
+  let queryBuilder = publicClient
+    .select({
+      key: true,
+      owner: true,
+      creator: true,
+      createdAt: true,
+      updatedAt: true,
+      expiresAt: true,
+      creationFlags: true,
+      payload: true,
+    })
+    .where(and(eq('type', str('statement')), eq('record_entity_key', str(recordEntityKey))))
+    .limit(200);
+
+  if (atBlock !== undefined) {
+    queryBuilder.atBlock(atBlock);
+  }
+
+  let res = await queryBuilder.fetch();
+  for (const e of res.entities) {
+    statements.push({
+      key: e.key as Hex,
+      owner: (e.owner || '0x') as Hex,
+      creator: (e.creator || '0x') as Hex,
+      createdAt: e.createdAt || 0n,
+      updatedAt: e.updatedAt || 0n,
+      expiresAt: e.expiresAt || 0n,
+      blockNumber: e.createdAt || 0n,
+      txHash: (e.key as string).slice(0, 18),
+      payload: e.toJson() as StatementPayload,
+      readonly: e.creationFlags?.readonly ?? true,
+      permissionlessExtension: e.creationFlags?.permissionlessExtension ?? true,
+    });
+  }
+
+  while (res.hasNextPage()) {
+    res = await res.next();
+    for (const e of res.entities) {
+      statements.push({
+        key: e.key as Hex,
+        owner: (e.owner || '0x') as Hex,
+        creator: (e.creator || '0x') as Hex,
+        createdAt: e.createdAt || 0n,
+        updatedAt: e.updatedAt || 0n,
+        expiresAt: e.expiresAt || 0n,
+        blockNumber: e.createdAt || 0n,
+        txHash: (e.key as string).slice(0, 18),
+        payload: e.toJson() as StatementPayload,
+        readonly: e.creationFlags?.readonly ?? true,
+        permissionlessExtension: e.creationFlags?.permissionlessExtension ?? true,
+      });
+    }
+  }
+
+  // Merge any local statements
+  const localStatements = getLocalStatements(recordEntityKey);
+  const seenKeys = new Set(statements.map((s) => s.key.toLowerCase()));
+  for (const ls of localStatements) {
+    if (!seenKeys.has(ls.key.toLowerCase())) {
+      statements.push(ls);
+      seenKeys.add(ls.key.toLowerCase());
+    }
+  }
+
+  statements.sort((a, b) => (b.blockNumber > a.blockNumber ? 1 : -1));
+  return statements;
+}
+
+/**
+ * Fetches authority responses linked to recordEntityKey
+ */
+export async function fetchAuthorityResponses(
+  recordEntityKey: Hex
+): Promise<Array<EntityWithMetadata<AuthorityResponsePayload> & { blockNumber: bigint; txHash: string }>> {
+  if (isDemoModeActive()) {
+    return getLocalAuthorityResponses(recordEntityKey);
+  }
+
+  const publicClient = getPublicArkivClient();
+  const responses: Array<EntityWithMetadata<AuthorityResponsePayload> & { blockNumber: bigint; txHash: string }> = [];
+
+  try {
+    const res = await publicClient
+      .select({
+        key: true,
+        owner: true,
+        creator: true,
+        createdAt: true,
+        updatedAt: true,
+        expiresAt: true,
+        creationFlags: true,
+        payload: true,
+      })
+      .where(and(eq('type', str('authority_response')), eq('record_entity_key', str(recordEntityKey))))
+      .limit(200)
+      .fetch();
+
+    for (const e of res.entities) {
+      responses.push({
+        key: e.key as Hex,
+        owner: (e.owner || '0x') as Hex,
+        creator: (e.creator || '0x') as Hex,
+        createdAt: e.createdAt || 0n,
+        updatedAt: e.updatedAt || 0n,
+        expiresAt: e.expiresAt || 0n,
+        blockNumber: e.createdAt || 0n,
+        txHash: (e.key as string).slice(0, 18),
+        payload: e.toJson() as AuthorityResponsePayload,
+        readonly: e.creationFlags?.readonly ?? true,
+        permissionlessExtension: e.creationFlags?.permissionlessExtension ?? true,
+      });
+    }
+  } catch (err) {
+    console.warn('Error querying authority responses:', err);
+  }
+
+  const localRes = getLocalAuthorityResponses(recordEntityKey);
+  const seenKeys = new Set(responses.map((r) => r.key.toLowerCase()));
+  for (const lr of localRes) {
+    if (!seenKeys.has(lr.key.toLowerCase())) {
+      responses.push(lr);
+      seenKeys.add(lr.key.toLowerCase());
+    }
+  }
+
+  responses.sort((a, b) => (b.blockNumber > a.blockNumber ? 1 : -1));
+  return responses;
+}
+
 // -------------------------------------------------------------
 // Local Storage (Explicit Demo Mode Only)
 // -------------------------------------------------------------
@@ -721,6 +1012,8 @@ export async function fetchRecordRevisions(
 const LOCAL_STORAGE_RECORDS_KEY = 'krix_local_records';
 const LOCAL_STORAGE_MANIFESTS_KEY = 'krix_local_manifests';
 const LOCAL_STORAGE_REPORTS_KEY = 'krix_local_reports';
+const LOCAL_STORAGE_STATEMENTS_KEY = 'krix_local_statements';
+const LOCAL_STORAGE_RESPONSES_KEY = 'krix_local_responses';
 const LOCAL_STORAGE_REVISIONS_KEY = 'krix_local_revisions';
 
 function getLocalRecords(): EntityWithMetadata<CivicRecordPayload>[] {
@@ -821,6 +1114,98 @@ function saveLocalReport(
   });
   localStorage.setItem(
     `${LOCAL_STORAGE_REPORTS_KEY}_${report.record_entity_key}`,
+    JSON.stringify(list, (_, v) => (typeof v === 'bigint' ? v.toString() : v))
+  );
+}
+
+function getLocalStatements(recordEntityKey: Hex): Array<EntityWithMetadata<StatementPayload> & { blockNumber: bigint; txHash: string }> {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(`${LOCAL_STORAGE_STATEMENTS_KEY}_${recordEntityKey}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return parsed.map((item: any) => ({
+      ...item,
+      createdAt: BigInt(item.createdAt || 0),
+      updatedAt: BigInt(item.updatedAt || 0),
+      expiresAt: BigInt(item.expiresAt || 0),
+      blockNumber: BigInt(item.blockNumber || 0),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalStatement(
+  key: Hex,
+  statement: StatementPayload,
+  creator: Hex,
+  blockNumber: bigint,
+  txHash: string
+): void {
+  if (typeof window === 'undefined') return;
+  const list = getLocalStatements(statement.record_entity_key);
+  list.push({
+    key,
+    owner: creator,
+    creator,
+    createdAt: blockNumber,
+    updatedAt: blockNumber,
+    expiresAt: blockNumber + 43200n,
+    blockNumber,
+    txHash,
+    payload: statement,
+    readonly: true,
+    permissionlessExtension: true,
+  });
+  localStorage.setItem(
+    `${LOCAL_STORAGE_STATEMENTS_KEY}_${statement.record_entity_key}`,
+    JSON.stringify(list, (_, v) => (typeof v === 'bigint' ? v.toString() : v))
+  );
+}
+
+function getLocalAuthorityResponses(recordEntityKey: Hex): Array<EntityWithMetadata<AuthorityResponsePayload> & { blockNumber: bigint; txHash: string }> {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(`${LOCAL_STORAGE_RESPONSES_KEY}_${recordEntityKey}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return parsed.map((item: any) => ({
+      ...item,
+      createdAt: BigInt(item.createdAt || 0),
+      updatedAt: BigInt(item.updatedAt || 0),
+      expiresAt: BigInt(item.expiresAt || 0),
+      blockNumber: BigInt(item.blockNumber || 0),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalAuthorityResponse(
+  key: Hex,
+  response: AuthorityResponsePayload,
+  creator: Hex,
+  blockNumber: bigint,
+  txHash: string
+): void {
+  if (typeof window === 'undefined') return;
+  const list = getLocalAuthorityResponses(response.record_entity_key);
+  list.push({
+    key,
+    owner: creator,
+    creator,
+    createdAt: blockNumber,
+    updatedAt: blockNumber,
+    expiresAt: blockNumber + 43200n,
+    blockNumber,
+    txHash,
+    payload: response,
+    readonly: true,
+    permissionlessExtension: true,
+  });
+  localStorage.setItem(
+    `${LOCAL_STORAGE_RESPONSES_KEY}_${response.record_entity_key}`,
     JSON.stringify(list, (_, v) => (typeof v === 'bigint' ? v.toString() : v))
   );
 }

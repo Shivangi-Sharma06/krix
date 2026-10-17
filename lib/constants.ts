@@ -23,4 +23,15 @@ export const DETECTION_CONFIG = {
 
   // Allowed image mime types (sniffed via magic bytes)
   ALLOWED_IMAGE_TYPES: ['image/jpeg', 'image/png', 'image/webp'],
+
+  // Party statement configurations
+  STATEMENT_PARTY_TYPES: ['TRANSPORT', 'DISTRIBUTOR', 'FACILITY_STAFF', 'OTHER'] as const,
+  STATEMENT_CONDITIONS: ['OK', 'DAMAGED', 'EXPIRED', 'SHORT', 'DELAYED'] as const,
+  STATEMENT_NOTE_MAX_LENGTH: 500,
+  STATEMENT_MAX_PHOTOS: 3,
+
+  // Ladder Detection threshold rules
+  LADDER_RULES: {
+    DISCLAIMER: 'Krix shows where claims disagree. It cannot prove where goods were lost or who is responsible.',
+  },
 } as const;

@@ -306,6 +306,15 @@ export function Header() {
                   Citizen
                 </Link>
                 <Link
+                  href="/party"
+                  style={{
+                    color: pathname.startsWith('/party') ? 'var(--text-main)' : 'var(--text-muted)',
+                    fontWeight: pathname.startsWith('/party') ? 600 : 400,
+                  }}
+                >
+                  Statements
+                </Link>
+                <Link
                   href="/authority"
                   style={{
                     color: pathname.startsWith('/authority') ? 'var(--text-main)' : 'var(--text-muted)',

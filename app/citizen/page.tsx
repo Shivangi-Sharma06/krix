@@ -267,11 +267,11 @@ export default function CitizenPage() {
                       <span>Report Reality</span>
                     </button>
                     <Link
-                      href={`/records/${record.key}`}
+                      href={`/citizen/promise/${record.key}`}
                       className="btn btn-primary btn-md"
                       style={{ fontSize: '13px' }}
                     >
-                      View Details &rarr;
+                      Inspect Ladder &rarr;
                     </Link>
                   </div>
                 </div>

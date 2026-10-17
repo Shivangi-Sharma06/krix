@@ -5,13 +5,14 @@ import {
   changeRecordCustodyOnChain,
   patchCivicRecordOnChain,
   submitGroundReportOnChain,
+  submitStatementOnChain,
   getWalletArkivClient,
   getPublicArkivClient,
   fetchCivicRecords,
   RPC_URL,
   EXPLORER_URL,
 } from '../lib/arkiv';
-import type { CivicRecordPayload, GroundReportPayload } from '../lib/types';
+import type { CivicRecordPayload, GroundReportPayload, StatementPayload } from '../lib/types';
 
 // Seed Wallet Private Key (override with SEED_PRIVATE_KEY in .env.local)
 const DEFAULT_SEED_KEY = (process.env.SEED_PRIVATE_KEY ||
@@ -123,7 +124,7 @@ export async function runRealSeedScenario(): Promise<void> {
     );
     console.log(`  ✓ Damaged Tx:  ${patchDamagedRes.txHash}`);
 
-    console.log(`\n[Step 5/6] Submitting 3 immutable Ground Reality Reports (Doctor, Inspector, Citizen)...`);
+    console.log(`\n[Step 5/7] Submitting 3 immutable Ground Reality Reports (Doctor, Inspector, Citizen)...`);
     const report1: GroundReportPayload = {
       type: 'ground_report',
       record_entity_key: createRes.entityKey,
@@ -166,7 +167,35 @@ export async function runRealSeedScenario(): Promise<void> {
     const rep3Res = await submitGroundReportOnChain(walletClient, report3);
     console.log(`  ✓ Report 3 (Citizen):   Entity ${rep3Res.entityKey.slice(0, 16)}... | Tx: ${rep3Res.txHash}`);
 
-    console.log(`\n[Step 6/6] Executing Cover-Up: Custodian flips status to ALL_GOOD_DELIVERED...`);
+    console.log(`\n[Step 6/7] Submitting 2 Intermediary Statements (Distributor claiming 480 with damage note, Clinic claiming 130 received)...`);
+    const stmt1: StatementPayload = {
+      type: 'statement',
+      record_entity_key: createRes.entityKey,
+      party_type: 'DISTRIBUTOR',
+      location: 'in transit',
+      received_count: 480,
+      passed_on_count: 480,
+      condition: 'DAMAGED',
+      note: 'Received 480 boxes at hub depot; 20 boxes soaked during torrential rain, moisture observed on seals.',
+      photo_cids: ['bafybeidvl63fgh4g2rtd6g4a33tewxupk2c27bkjffvhjklmno3pqr4stu'],
+    };
+    const stmt1Res = await submitStatementOnChain(walletClient, stmt1);
+    console.log(`  ✓ Statement 1 (Distributor: 480 rec/passed): Entity ${stmt1Res.entityKey.slice(0, 16)}... | Tx: ${stmt1Res.txHash}`);
+
+    const stmt2: StatementPayload = {
+      type: 'statement',
+      record_entity_key: createRes.entityKey,
+      party_type: 'FACILITY_STAFF',
+      location: 'PHC Mangalagiri',
+      received_count: 130, // Divergence! 130 received vs 480 earlier passed on
+      condition: 'SHORT',
+      note: 'Clinic storage staff logged arrival of only 130 usable kits; remaining cartons missing from cargo handover.',
+      photo_cids: [],
+    };
+    const stmt2Res = await submitStatementOnChain(walletClient, stmt2);
+    console.log(`  ✓ Statement 2 (Clinic Staff: 130 received): Entity ${stmt2Res.entityKey.slice(0, 16)}... | Tx: ${stmt2Res.txHash}`);
+
+    console.log(`\n[Step 7/7] Executing Cover-Up: Custodian flips status to ALL_GOOD_DELIVERED...`);
     const coverUpRes = await patchCivicRecordOnChain(
       walletClient,
       createRes.entityKey,

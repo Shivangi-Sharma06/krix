@@ -244,6 +244,42 @@ export default function LandingPage() {
             </Link>
           </div>
 
+          {/* Third Entry Underneath Hero Cards: Intermediaries */}
+          <div style={{ maxWidth: '640px', margin: '-24px auto 44px' }}>
+            <Link
+              href="/party"
+              style={{
+                textDecoration: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '14px 20px',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-card)',
+                backgroundColor: 'var(--bg-surface)',
+                transition: 'border-color 0.2s ease, background-color 0.2s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = 'var(--accent)';
+                e.currentTarget.style.backgroundColor = 'var(--bg-surface-raised)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = 'var(--border-subtle)';
+                e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <Truck size={18} style={{ color: 'var(--text-muted)' }} />
+                <span style={{ fontSize: '14px', color: 'var(--text-main)', fontWeight: 500 }}>
+                  I handle deliveries (transport, distributor, clinic staff)
+                </span>
+              </div>
+              <span style={{ fontSize: '13px', color: 'var(--accent)', fontWeight: 600 }}>
+                Record Statement &rarr;
+              </span>
+            </Link>
+          </div>
+
           {/* Hero Visual: Subtle product mock placed below role cards */}
           <div style={{ maxWidth: '640px', margin: '0 auto' }}>
             <div style={{ textAlign: 'center', marginBottom: '12px', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-faint)' }}>

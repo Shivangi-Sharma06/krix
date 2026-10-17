@@ -19,6 +19,38 @@ export type GroundReportVerdict =
 
 export type ReporterRole = 'DOCTOR' | 'INSPECTOR' | 'CITIZEN';
 
+export type StatementPartyType = 'TRANSPORT' | 'DISTRIBUTOR' | 'FACILITY_STAFF' | 'OTHER';
+
+export type StatementCondition = 'OK' | 'DAMAGED' | 'EXPIRED' | 'SHORT' | 'DELAYED';
+
+/**
+ * Immutable Statement from an intermediary or facility party (readonly: true, permissionlessExtension: true)
+ */
+export interface StatementPayload {
+  type: 'statement';
+  record_entity_key: Hex; // Canonical link to promise / record entity key
+  party_type: StatementPartyType; // Self-declared
+  location: string; // chosen from village list or "in transit"
+  received_count?: number;
+  passed_on_count?: number;
+  condition: StatementCondition;
+  note: string; // plain text max 500
+  photo_cids: string[]; // IPFS only max 3
+  event_date?: string; // self-declared event date (optional)
+}
+
+/**
+ * Readonly Response from Authority replying to a complaint key or statement key
+ */
+export interface AuthorityResponsePayload {
+  type: 'authority_response';
+  record_entity_key: Hex;
+  target_key: Hex; // References complaint key or statement key
+  target_type: 'complaint' | 'statement';
+  response_text: string;
+  official_role?: string;
+}
+
 /**
  * Dispatch Manifest: Created as an immutable second entity (readonly: true)
  * at record genesis to guarantee origin parameters can never be silently overwritten.
@@ -130,3 +162,46 @@ export interface CoverUpDetectionResult {
   alertMessage?: string;
   evidences: CoverUpEvidence[];
 }
+
+export type LadderClaimSource = 'AUTHORITY' | 'STATEMENT' | 'CITIZEN_REPORT' | 'AUTHORITY_RESPONSE';
+
+export interface LadderClaimEntry {
+  id: string;
+  source: LadderClaimSource;
+  blockNumber: bigint;
+  txHash: string;
+  wallet: string;
+  isAuthorityWallet: boolean;
+  isDuplicateWallet: boolean; // Same wallet as an earlier claim party
+  partyType?: StatementPartyType | ReporterRole | 'AUTHORITY';
+  claimedQuantity?: number;
+  receivedCount?: number;
+  passedOnCount?: number;
+  condition?: StatementCondition | GroundReportVerdict;
+  location?: string;
+  statusClaim?: string;
+  notes?: string;
+  photoCids?: string[];
+  rawEntityKey?: string;
+}
+
+export interface LadderFinding {
+  ruleId: string;
+  type: 'NUMBERS_DIFFER' | 'NO_STATEMENT' | 'CONDITION_CONTRADICTION' | 'DELAY_CONTRADICTION' | 'TIMELINE_ANOMALY';
+  severity: 'WARNING' | 'ALERT' | 'INFO';
+  title: string;
+  description: string;
+  blockTimes?: { earlierBlock: bigint; laterBlock: bigint };
+  difference?: number;
+  involvedWallets?: string[];
+}
+
+export interface ClaimsLadderResult {
+  claims: LadderClaimEntry[];
+  findings: LadderFinding[];
+  uniqueIndependentWallets: number;
+  totalStatements: number;
+  totalCitizenReports: number;
+  disclaimer: string;
+}
+

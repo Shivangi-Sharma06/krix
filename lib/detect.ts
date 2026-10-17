@@ -6,6 +6,11 @@ import type {
   CoverUpEvidence,
   GroundReportVerdict,
   DispatchManifestPayload,
+  StatementPayload,
+  AuthorityResponsePayload,
+  ClaimsLadderResult,
+  LadderClaimEntry,
+  LadderFinding,
 } from './types';
 import { DETECTION_CONFIG } from './constants';
 
@@ -316,5 +321,343 @@ export function detectCoverUp(input: DetectionInput): CoverUpDetectionResult {
     },
     alertMessage,
     evidences,
+  };
+}
+
+export interface DetectionInputStatement {
+  key?: string;
+  blockNumber: bigint;
+  txHash: string;
+  creator: string;
+  payload: StatementPayload;
+}
+
+export interface DetectionInputAuthorityResponse {
+  key?: string;
+  blockNumber: bigint;
+  txHash: string;
+  creator: string;
+  payload: AuthorityResponsePayload;
+}
+
+export interface ClaimsLadderInput {
+  currentRecord: CivicRecordPayload;
+  recordCreatedAtBlock?: bigint;
+  recordCreatorWallet?: string;
+  revisions: RecordRevision[];
+  reports: DetectionInputReport[];
+  statements: DetectionInputStatement[];
+  responses?: DetectionInputAuthorityResponse[];
+  custodianWallets?: string[];
+}
+
+/**
+ * Builds the Claims Ladder and evaluates cross-party claims rules:
+ * - Orders claims side by side by block time
+ * - Identifies authority claims, statements, citizen reports
+ * - Flags count drop without explanation: "numbers differ"
+ * - Flags "no statement from any party" when delivered claimed with zero statements and zero independent witnesses
+ * - Flags "authority claims delivered, statement says damaged/short"
+ * - Flags "statement says delayed, authority claims delivered earlier"
+ * - Flags timeline anomaly if statement created before promise genesis
+ * - Excludes and labels statements from authority's own wallets or duplicate wallets
+ * - Always includes neutral disclaimer
+ */
+export function buildClaimsLadder(input: ClaimsLadderInput): ClaimsLadderResult {
+  const {
+    currentRecord,
+    recordCreatedAtBlock = 0n,
+    recordCreatorWallet = '',
+    revisions,
+    reports,
+    statements,
+    responses = [],
+    custodianWallets = [],
+  } = input;
+
+  const authorityWallets = new Set<string>(
+    [
+      recordCreatorWallet,
+      ...custodianWallets,
+      ...revisions.map((r) => r.updater),
+    ]
+      .filter(Boolean)
+      .map((w) => w.toLowerCase())
+  );
+
+  const claims: LadderClaimEntry[] = [];
+  const seenWallets = new Set<string>();
+
+  // 1. Authority Claims from Revisions / Genesis
+  if (revisions.length === 0) {
+    claims.push({
+      id: 'auth-genesis',
+      source: 'AUTHORITY',
+      blockNumber: recordCreatedAtBlock,
+      txHash: '0xgenesis',
+      wallet: recordCreatorWallet || '0xauthority',
+      isAuthorityWallet: true,
+      isDuplicateWallet: false,
+      partyType: 'AUTHORITY',
+      claimedQuantity: currentRecord.quantity_dispatched,
+      receivedCount: currentRecord.quantity_received,
+      statusClaim: currentRecord.status,
+      notes: currentRecord.notes,
+      location: currentRecord.origin,
+    });
+    if (recordCreatorWallet) seenWallets.add(recordCreatorWallet.toLowerCase());
+  } else {
+    for (let i = 0; i < revisions.length; i++) {
+      const rev = revisions[i];
+      claims.push({
+        id: `auth-rev-${i}`,
+        source: 'AUTHORITY',
+        blockNumber: rev.blockNumber,
+        txHash: rev.txHash,
+        wallet: rev.updater,
+        isAuthorityWallet: true,
+        isDuplicateWallet: false,
+        partyType: 'AUTHORITY',
+        claimedQuantity: rev.rawPayload?.quantity_dispatched ?? currentRecord.quantity_dispatched,
+        receivedCount: rev.quantity_received ?? (i === 0 ? 0 : undefined),
+        statusClaim: rev.status || rev.rawPayload?.status,
+        notes: rev.notes || rev.rawPayload?.notes,
+        location: rev.rawPayload?.origin || currentRecord.origin,
+      });
+      if (rev.updater) seenWallets.add(rev.updater.toLowerCase());
+    }
+  }
+
+  // 2. Statements from Intermediary / Facility Parties
+  for (const st of statements) {
+    const creatorLower = st.creator.toLowerCase();
+    const isAuth = authorityWallets.has(creatorLower);
+    const isDup = !isAuth && seenWallets.has(creatorLower);
+    if (!isAuth && !isDup) {
+      seenWallets.add(creatorLower);
+    }
+
+    claims.push({
+      id: st.key || `st-${st.txHash.slice(0, 10)}`,
+      source: 'STATEMENT',
+      blockNumber: st.blockNumber,
+      txHash: st.txHash,
+      wallet: st.creator,
+      isAuthorityWallet: isAuth,
+      isDuplicateWallet: isDup,
+      partyType: st.payload.party_type,
+      receivedCount: st.payload.received_count,
+      passedOnCount: st.payload.passed_on_count,
+      condition: st.payload.condition,
+      location: st.payload.location,
+      notes: st.payload.note,
+      photoCids: st.payload.photo_cids,
+      rawEntityKey: st.key,
+    });
+  }
+
+  // 3. Citizen Reports / Witnesses
+  for (const rp of reports) {
+    const creatorLower = rp.creator.toLowerCase();
+    const isAuth = authorityWallets.has(creatorLower);
+    const isDup = !isAuth && seenWallets.has(creatorLower);
+    if (!isAuth && !isDup) {
+      seenWallets.add(creatorLower);
+    }
+
+    claims.push({
+      id: rp.key || `rp-${rp.txHash.slice(0, 10)}`,
+      source: 'CITIZEN_REPORT',
+      blockNumber: rp.blockNumber,
+      txHash: rp.txHash,
+      wallet: rp.creator,
+      isAuthorityWallet: isAuth,
+      isDuplicateWallet: isDup,
+      partyType: rp.payload.reporter_role,
+      receivedCount: rp.payload.count_received,
+      condition: rp.payload.verdict,
+      location: rp.payload.location || undefined,
+      notes: rp.payload.description,
+      photoCids: rp.payload.photo_cids,
+      rawEntityKey: rp.key,
+    });
+  }
+
+  // 4. Authority Responses
+  for (const resp of responses) {
+    claims.push({
+      id: resp.key || `resp-${resp.txHash.slice(0, 10)}`,
+      source: 'AUTHORITY_RESPONSE',
+      blockNumber: resp.blockNumber,
+      txHash: resp.txHash,
+      wallet: resp.creator,
+      isAuthorityWallet: true,
+      isDuplicateWallet: false,
+      partyType: 'AUTHORITY',
+      notes: resp.payload.response_text,
+      rawEntityKey: resp.key,
+    });
+  }
+
+  // Order all claims by blockNumber ascending
+  claims.sort((a, b) => (a.blockNumber < b.blockNumber ? -1 : a.blockNumber > b.blockNumber ? 1 : 0));
+
+  // Determine unique independent wallets (excluding authority wallets and duplicates)
+  const independentWalletsSet = new Set<string>();
+  for (const c of claims) {
+    if (!c.isAuthorityWallet) {
+      independentWalletsSet.add(c.wallet.toLowerCase());
+    }
+  }
+
+  const findings: LadderFinding[] = [];
+
+  // Finding 1: Timeline Anomaly (Statement before promise genesis)
+  for (const st of statements) {
+    if (recordCreatedAtBlock > 0n && st.blockNumber < recordCreatedAtBlock) {
+      findings.push({
+        ruleId: 'STATEMENT_BEFORE_PROMISE_GENESIS',
+        type: 'TIMELINE_ANOMALY',
+        severity: 'ALERT',
+        title: 'Statement recorded before promise creation',
+        description: `Statement from ${st.payload.party_type} at block #${st.blockNumber.toString()} predates the creation of this promise at block #${recordCreatedAtBlock.toString()}.`,
+        blockTimes: { earlierBlock: st.blockNumber, laterBlock: recordCreatedAtBlock },
+        involvedWallets: [st.creator],
+      });
+    }
+  }
+
+  // Finding 2: "numbers differ"
+  // When a later statement's received_count is lower than an earlier claimed count
+  // with no statement or response on record explaining it.
+  const orderedValidStatements = claims.filter(
+    (c) => c.source === 'STATEMENT' && !c.isAuthorityWallet
+  );
+
+  for (let i = 0; i < orderedValidStatements.length; i++) {
+    const currentSt = orderedValidStatements[i];
+    if (currentSt.receivedCount === undefined) continue;
+
+    // Compare against earlier statements that had a count
+    for (let j = 0; j < i; j++) {
+      const earlierSt = orderedValidStatements[j];
+      const earlierCount = earlierSt.passedOnCount ?? earlierSt.receivedCount;
+      if (earlierCount !== undefined && currentSt.receivedCount < earlierCount) {
+        // Check if there is an explanation:
+        // A statement or response between earlier and current or in currentSt note detailing damage/shortage/explanation
+        const explanationInNote =
+          currentSt.notes &&
+          currentSt.notes.trim().length > 0 &&
+          (currentSt.condition === 'DAMAGED' ||
+            currentSt.condition === 'SHORT' ||
+            currentSt.condition === 'EXPIRED' ||
+            /damage|leak|spill|accident|short|lost|break|theft|mishap|delay/i.test(currentSt.notes));
+
+        const hasExplainingResponse = responses.some(
+          (r) =>
+            r.blockNumber >= earlierSt.blockNumber &&
+            r.blockNumber <= currentSt.blockNumber &&
+            /damage|transit|loss|short|reconcil|replac/i.test(r.payload.response_text)
+        );
+
+        if (!explanationInNote && !hasExplainingResponse) {
+          const diff = earlierCount - currentSt.receivedCount;
+          findings.push({
+            ruleId: `NUMBERS_DIFFER_${earlierSt.id}_${currentSt.id}`,
+            type: 'NUMBERS_DIFFER',
+            severity: 'WARNING',
+            title: 'Numbers differ without explanation on record',
+            description: `At block #${currentSt.blockNumber.toString()}, party (${currentSt.partyType}) recorded ${currentSt.receivedCount} received, which is ${diff} lower than the earlier count of ${earlierCount} at block #${earlierSt.blockNumber.toString()} with no explanatory statement or official response on record.`,
+            blockTimes: { earlierBlock: earlierSt.blockNumber, laterBlock: currentSt.blockNumber },
+            difference: diff,
+            involvedWallets: [earlierSt.wallet, currentSt.wallet],
+          });
+        }
+      }
+    }
+  }
+
+  // Finding 3: "no statement from any party"
+  // When the authority claims delivered but there are zero statements and zero independent witnesses.
+  const authorityDeliveredClaim = claims.find(
+    (c) =>
+      c.source === 'AUTHORITY' &&
+      c.statusClaim &&
+      POSITIVE_STATUSES.includes(c.statusClaim)
+  );
+
+  const independentStatements = statements.filter(
+    (s) => !authorityWallets.has(s.creator.toLowerCase())
+  );
+  const independentReports = reports.filter(
+    (r) => !authorityWallets.has(r.creator.toLowerCase())
+  );
+
+  if (
+    authorityDeliveredClaim &&
+    independentStatements.length === 0 &&
+    independentReports.length === 0
+  ) {
+    findings.push({
+      ruleId: 'NO_STATEMENT_FROM_ANY_PARTY',
+      type: 'NO_STATEMENT',
+      severity: 'WARNING',
+      title: 'No statement from any party',
+      description: `Authority claims status as ${authorityDeliveredClaim.statusClaim} at block #${authorityDeliveredClaim.blockNumber.toString()}, but there are zero statements from intermediary parties and zero independent citizen reports on record.`,
+      blockTimes: { earlierBlock: authorityDeliveredClaim.blockNumber, laterBlock: authorityDeliveredClaim.blockNumber },
+      involvedWallets: [authorityDeliveredClaim.wallet],
+    });
+  }
+
+  // Finding 4: "authority claims delivered, statement says damaged/short"
+  if (authorityDeliveredClaim) {
+    const damagedOrShortStatements = statements.filter(
+      (s) => s.payload.condition === 'DAMAGED' || s.payload.condition === 'SHORT'
+    );
+    if (damagedOrShortStatements.length > 0) {
+      const st = damagedOrShortStatements[0];
+      findings.push({
+        ruleId: 'AUTHORITY_DELIVERED_STATEMENT_DEFECT',
+        type: 'CONDITION_CONTRADICTION',
+        severity: 'ALERT',
+        title: 'Authority claims delivered while statement records defect',
+        description: `Authority claims status ${authorityDeliveredClaim.statusClaim} at block #${authorityDeliveredClaim.blockNumber.toString()}, while party statement from ${st.payload.party_type} at block #${st.blockNumber.toString()} reports condition as ${st.payload.condition}.`,
+        blockTimes: { earlierBlock: authorityDeliveredClaim.blockNumber, laterBlock: st.blockNumber },
+        involvedWallets: [authorityDeliveredClaim.wallet, st.creator],
+      });
+    }
+  }
+
+  // Finding 5: "statement says delayed, authority claims delivered earlier"
+  for (const st of statements) {
+    if (st.payload.condition === 'DELAYED') {
+      const earlierDeliveredAuth = claims.find(
+        (c) =>
+          c.source === 'AUTHORITY' &&
+          c.statusClaim &&
+          POSITIVE_STATUSES.includes(c.statusClaim) &&
+          c.blockNumber <= st.blockNumber
+      );
+      if (earlierDeliveredAuth) {
+        findings.push({
+          ruleId: `STATEMENT_DELAYED_AFTER_DELIVERY_${st.key || st.blockNumber}`,
+          type: 'DELAY_CONTRADICTION',
+          severity: 'WARNING',
+          title: 'Statement indicates delay after delivery was claimed',
+          description: `Statement from ${st.payload.party_type} at block #${st.blockNumber.toString()} reports condition as DELAYED, while authority previously recorded status ${earlierDeliveredAuth.statusClaim} at block #${earlierDeliveredAuth.blockNumber.toString()}.`,
+          blockTimes: { earlierBlock: earlierDeliveredAuth.blockNumber, laterBlock: st.blockNumber },
+          involvedWallets: [earlierDeliveredAuth.wallet, st.creator],
+        });
+      }
+    }
+  }
+
+  return {
+    claims,
+    findings,
+    uniqueIndependentWallets: independentWalletsSet.size,
+    totalStatements: statements.length,
+    totalCitizenReports: reports.length,
+    disclaimer: DETECTION_CONFIG.LADDER_RULES.DISCLAIMER,
   };
 }
