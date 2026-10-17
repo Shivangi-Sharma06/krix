@@ -13,13 +13,13 @@ interface CoverUpAlertProps {
 
 export function CoverUpAlert({ detection, onDetectClick, loading }: CoverUpAlertProps) {
   return (
-    <div style={{ marginBottom: '24px' }}>
-      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap' }}>
+    <div style={{ marginBottom: '28px' }}>
+      <div style={{ display: 'flex', gap: '14px', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap' }}>
         <button
           onClick={onDetectClick}
           disabled={loading}
-          className="btn-danger"
-          style={{ height: '38px', padding: '0 16px' }}
+          className="btn btn-danger btn-md"
+          style={{ height: '38px', padding: '0 16px', fontWeight: 600 }}
         >
           {loading ? 'Auditing On-Chain Revisions...' : 'Detect Cover-Up'}
         </button>
@@ -30,11 +30,13 @@ export function CoverUpAlert({ detection, onDetectClick, loading }: CoverUpAlert
 
       {detection && (
         <div
+          role="region"
+          aria-label="Cover-up detection results"
           style={{
             border: `1px solid ${detection.isCoverUp ? 'var(--danger-border)' : 'var(--success-border)'}`,
-            background: detection.isCoverUp ? 'var(--danger-light)' : 'var(--success-light)',
-            borderRadius: 'var(--radius)',
-            padding: '20px',
+            backgroundColor: detection.isCoverUp ? 'var(--danger-bg)' : 'var(--success-bg)',
+            borderRadius: 'var(--radius-card)',
+            padding: '24px',
           }}
         >
           {/* Header & Score */}
@@ -45,23 +47,24 @@ export function CoverUpAlert({ detection, onDetectClick, loading }: CoverUpAlert
               alignItems: 'flex-start',
               flexWrap: 'wrap',
               gap: '16px',
-              borderBottom: `1px solid ${detection.isCoverUp ? '#FECDCA' : '#A6F4C5'}`,
-              paddingBottom: '16px',
-              marginBottom: '16px',
+              borderBottom: `1px solid ${detection.isCoverUp ? 'var(--danger-border)' : 'var(--success-border)'}`,
+              paddingBottom: '18px',
+              marginBottom: '18px',
             }}
           >
             <div>
               <div
                 style={{
                   fontSize: '18px',
-                  fontWeight: '700',
+                  fontWeight: 600,
                   color: detection.isCoverUp ? 'var(--danger)' : 'var(--success)',
-                  marginBottom: '4px',
+                  marginBottom: '6px',
+                  letterSpacing: '0.02em',
                 }}
               >
-                {detection.isCoverUp ? 'COVER-UP DETECTED' : 'NO CONTRADICTION FOUND'}
+                {detection.isCoverUp ? 'CONTRADICTION DETECTED' : 'NO CONTRADICTION FOUND'}
               </div>
-              <div style={{ fontSize: '14px', color: 'var(--text-main)', lineHeight: '1.5' }}>
+              <div style={{ fontSize: '14px', color: 'var(--text-main)', lineHeight: 1.6, maxWidth: '640px' }}>
                 {detection.isCoverUp
                   ? detection.alertMessage
                   : 'All official custodian edits are consistent with reported ground reality submissions.'}
@@ -72,20 +75,21 @@ export function CoverUpAlert({ detection, onDetectClick, loading }: CoverUpAlert
             <div
               style={{
                 border: '1px solid var(--border-subtle)',
-                background: '#FFFFFF',
-                borderRadius: 'var(--radius)',
-                padding: '10px 16px',
+                backgroundColor: 'var(--bg-surface-raised)',
+                borderRadius: 'var(--radius-card)',
+                padding: '12px 20px',
                 textAlign: 'center',
                 minWidth: '130px',
               }}
             >
-              <div style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                Cover-Up Score
+              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                Discrepancy Score
               </div>
               <div
+                className="mono"
                 style={{
                   fontSize: '26px',
-                  fontWeight: '800',
+                  fontWeight: 600,
                   color: detection.score >= 50 ? 'var(--danger)' : 'var(--success)',
                 }}
               >
@@ -99,15 +103,15 @@ export function CoverUpAlert({ detection, onDetectClick, loading }: CoverUpAlert
             style={{
               fontSize: '12px',
               color: 'var(--text-muted)',
-              marginBottom: '16px',
-              background: '#FFFFFF',
-              padding: '10px 14px',
-              borderRadius: 'var(--radius)',
+              marginBottom: '20px',
+              backgroundColor: 'var(--bg-surface-raised)',
+              padding: '12px 16px',
+              borderRadius: 'var(--radius-btn)',
               border: '1px solid var(--border-subtle)',
             }}
           >
             <div><strong>Detection Formula:</strong> {detection.scoreBreakdown.formula}</div>
-            <div style={{ marginTop: '6px', display: 'flex', gap: '14px', flexWrap: 'wrap', color: 'var(--text-main)' }}>
+            <div style={{ marginTop: '8px', display: 'flex', gap: '14px', flexWrap: 'wrap', color: 'var(--text-main)' }}>
               <span>Independent Reporters: <strong>+{detection.scoreBreakdown.independentReportersWeight}</strong></span>
               <span>Avg Severity: <strong>+{detection.scoreBreakdown.averageSeverityWeight}</strong></span>
               <span>Status Reversals: <strong>+{detection.scoreBreakdown.statusReversalWeight}</strong></span>
@@ -122,7 +126,7 @@ export function CoverUpAlert({ detection, onDetectClick, loading }: CoverUpAlert
           {/* Documented Evidence List */}
           {detection.evidences.length > 0 && (
             <div>
-              <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--danger)', textTransform: 'uppercase', marginBottom: '10px', letterSpacing: '0.04em' }}>
+              <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--danger)', textTransform: 'uppercase', marginBottom: '12px', letterSpacing: '0.08em' }}>
                 On-Chain Evidence Items ({detection.evidences.length})
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -131,50 +135,51 @@ export function CoverUpAlert({ detection, onDetectClick, loading }: CoverUpAlert
                     key={idx}
                     style={{
                       border: '1px solid var(--border-subtle)',
-                      background: '#FFFFFF',
-                      borderRadius: 'var(--radius)',
-                      padding: '14px',
+                      backgroundColor: 'var(--bg-surface)',
+                      borderRadius: 'var(--radius-card)',
+                      padding: '16px',
                       fontSize: '13px',
                     }}
                   >
-                    <div style={{ fontWeight: '600', marginBottom: '6px' }}>
+                    <div style={{ fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
                       {evidence.ruleId}: {evidence.description}
                     </div>
                     <div style={{ color: 'var(--text-muted)', fontSize: '12px', marginBottom: '10px' }}>
-                      Suspicious Edit Block: <strong style={{ color: 'var(--text-main)' }}>#{evidence.suspiciousEditBlock.toString()}</strong> | Custodian:{' '}
-                      <span style={{ fontFamily: 'monospace' }}>{evidence.custodianWallet}</span> | Tx:{' '}
+                      Suspicious Edit Block: <strong style={{ color: 'var(--text-main)' }}>#{evidence.suspiciousEditBlock.toString()}</strong> &middot; Custodian:{' '}
+                      <span className="mono">{evidence.custodianWallet}</span> &middot; Tx:{' '}
                       <a
                         href={`${EXPLORER_URL}/tx/${evidence.suspiciousEditTxHash}`}
                         target="_blank"
                         rel="noreferrer"
-                        style={{ fontFamily: 'monospace' }}
+                        className="mono"
+                        style={{ color: 'var(--accent)' }}
                       >
-                        {evidence.suspiciousEditTxHash.slice(0, 18)}...
+                        {evidence.suspiciousEditTxHash.slice(0, 16)}...
                       </a>
                     </div>
 
                     {evidence.contradictingReports.length > 0 && (
-                      <div style={{ marginTop: '8px', borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
-                        <div style={{ fontSize: '12px', fontWeight: '600', marginBottom: '6px' }}>
+                      <div style={{ marginTop: '10px', borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
+                        <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '8px', color: 'var(--text-main)' }}>
                           Contradicting Immutable Reports on Record:
                         </div>
-                        <ul style={{ margin: 0, paddingLeft: '18px' }}>
+                        <ul style={{ margin: 0, paddingLeft: '18px', color: 'var(--text-muted)' }}>
                           {evidence.contradictingReports.map((cr, cIdx) => (
                             <li key={cIdx} style={{ marginBottom: '8px' }}>
                               <span>
                                 Block #{cr.blockNumber.toString()} by{' '}
-                                <span style={{ fontFamily: 'monospace' }}>{cr.reporter.slice(0, 8)}...</span>: Verdict:{' '}
-                                <strong>{cr.verdict}</strong> (Severity: {cr.severity}/10) - "{cr.description}"
+                                <span className="mono">{cr.reporter.slice(0, 8)}...</span>: Verdict:{' '}
+                                <strong style={{ color: 'var(--danger)' }}>{cr.verdict}</strong> (Severity: {cr.severity}/10) &mdash; &ldquo;{cr.description}&rdquo;
                               </span>
                               {cr.photo_cids.length > 0 && (
-                                <div style={{ marginTop: '4px', display: 'flex', gap: '8px' }}>
+                                <div style={{ marginTop: '6px', display: 'flex', gap: '10px' }}>
                                   {cr.photo_cids.map((cid, pIdx) => (
                                     <a
                                       key={pIdx}
                                       href={getIpfsGatewayUrl(cid)}
                                       target="_blank"
                                       rel="noreferrer"
-                                      style={{ fontSize: '12px' }}
+                                      style={{ fontSize: '12px', color: 'var(--accent)' }}
                                     >
                                       [View Photo ({cid.slice(0, 10)}...)]
                                     </a>

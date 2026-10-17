@@ -19,7 +19,7 @@ const DEFAULT_SEED_KEY = (process.env.SEED_PRIVATE_KEY ||
 
 export async function runRealSeedScenario(): Promise<void> {
   console.log('====================================================');
-  console.log('  JanAudit (Krix) — On-Chain Seed Script Execution   ');
+  console.log('       Krix — On-Chain Seed Script Execution        ');
   console.log('====================================================');
   console.log(`Connecting to Arkiv RPC: ${RPC_URL}`);
   console.log(`Explorer: ${EXPLORER_URL}\n`);
@@ -49,14 +49,16 @@ export async function runRealSeedScenario(): Promise<void> {
   const distributorAddress = '0x2B3C4D5E6F7A8B9C0D1E2F3A4B5C6D7E8F9A012B' as `0x${string}`;
   const clinicAddress = '0x3C4D5E6F7A8B9C0D1E2F3A4B5C6D7E8F9A0123C4' as `0x${string}`;
 
-  const referenceCode = 'JA-MEDICINE-GNT-2026-DEMO01';
+  const referenceCode = 'KX-MEDICINE-GNT-2026-DEMO01';
 
-  // Check idempotency: does JA-MEDICINE-GNT-2026-DEMO01 already exist?
+  // Check idempotency: does KX-MEDICINE-GNT-2026-DEMO01 (or legacy JA-) already exist?
   try {
     const existing = await fetchCivicRecords();
-    const match = existing.find((r) => r.payload.reference_code === referenceCode);
+    const match = existing.find(
+      (r) => r.payload.reference_code === referenceCode || r.payload.reference_code === 'JA-MEDICINE-GNT-2026-DEMO01'
+    );
     if (match) {
-      console.log(`[Idempotency Check] Record ${referenceCode} already exists on chain!`);
+      console.log(`[Idempotency Check] Record ${match.payload.reference_code} already exists on chain!`);
       console.log(`  ✓ Canonical Entity Key: ${match.key}`);
       console.log(`  ✓ Open in app: http://localhost:3000/records/${match.key}`);
       return;

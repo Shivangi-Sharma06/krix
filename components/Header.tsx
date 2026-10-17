@@ -2,11 +2,15 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useWallet, PRESET_WALLETS } from './WalletContext';
 import { EXPLORER_URL, FAUCET_URL, RPC_URL } from '@/lib/arkiv';
 import { isDemoModeActive, getRpcUrls } from '@/lib/config';
 
 export function Header() {
+  const pathname = usePathname();
+  const isLandingPage = pathname === '/';
+
   const {
     address,
     isConnected,
@@ -23,6 +27,10 @@ export function Header() {
   const [liveBlock, setLiveBlock] = useState<bigint | null>(null);
   const [rpcStatus, setRpcStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
   const [activeRpc, setActiveRpc] = useState(RPC_URL);
+  const [isScrolled, setIsScrolled] = useState(false);
+  const [announcementDismissed, setAnnouncementDismissed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
   const demoMode = isDemoModeActive();
 
   useEffect(() => {
@@ -47,7 +55,7 @@ export function Header() {
             }
           }
         } catch {
-          // Failover to next RPC in list (Item 8)
+          // Failover to next RPC in list
         }
       }
       if (isMounted) {
@@ -63,184 +71,332 @@ export function Header() {
     };
   }, []);
 
-  return (
-    <>
-      {/* Permanent Demo Mode Banner */}
-      {demoMode && (
-        <div
-          style={{
-            backgroundColor: 'var(--warning-light)',
-            borderBottom: '1px solid var(--warning-border)',
-            color: 'var(--warning)',
-            padding: '8px 16px',
-            fontSize: '13px',
-            fontWeight: '600',
-            textAlign: 'center',
-          }}
-        >
-          DEMO MODE - data is simulated locally and is not on the live blockchain
-        </div>
-      )}
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 8);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
-      {/* Wrong Network Warning Banner */}
-      {isConnected && !isCorrectNetwork && (
-        <div
+  return (
+    <header
+      style={{
+        position: 'sticky',
+        top: 0,
+        zIndex: 50,
+        width: '100%',
+        backgroundColor: isScrolled ? 'rgba(20, 19, 17, 0.95)' : 'var(--bg-app)',
+        backdropFilter: isScrolled ? 'blur(10px)' : 'none',
+        borderBottom: isScrolled ? '1px solid var(--border-subtle)' : '1px solid transparent',
+        transition: 'background-color 0.2s ease, border-color 0.2s ease',
+      }}
+    >
+      {/* 1. Dismissible Announcement Bar (Landing Page only) */}
+      {isLandingPage && !announcementDismissed && (
+        <aside
+          aria-label="Announcement"
           style={{
-            backgroundColor: 'var(--danger-light)',
-            borderBottom: '1px solid var(--danger-border)',
-            color: 'var(--danger)',
+            backgroundColor: 'var(--bg-surface-raised)',
+            borderBottom: '1px solid var(--border-subtle)',
             padding: '8px 16px',
             fontSize: '13px',
-            fontWeight: '500',
-            textAlign: 'center',
+            color: 'var(--text-muted)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             gap: '12px',
           }}
         >
-          <span>Wrong Network: Your wallet is not connected to Tiramisu Testnet (ID 7738577).</span>
-          <button onClick={switchNetwork} className="btn-secondary" style={{ height: '28px', fontSize: '12px' }}>
-            Switch to Tiramisu
+          <span>
+            Krix is live on Tiramisu testnet (Chain ID 7738577).{' '}
+            <Link
+              href="/records"
+              style={{ color: 'var(--accent)', textDecoration: 'underline', fontWeight: 500 }}
+            >
+              Explore real-time records &rarr;
+            </Link>
+          </span>
+          <button
+            onClick={() => setAnnouncementDismissed(true)}
+            aria-label="Dismiss announcement"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--text-faint)',
+              cursor: 'pointer',
+              fontSize: '16px',
+              padding: '0 4px',
+              lineHeight: 1,
+            }}
+          >
+            &times;
+          </button>
+        </aside>
+      )}
+
+      {/* 2. Demo Mode Warning Banner */}
+      {demoMode && (
+        <div
+          role="alert"
+          style={{
+            backgroundColor: 'var(--warning-bg)',
+            color: 'var(--warning)',
+            borderBottom: '1px solid var(--warning-border)',
+            padding: '6px 16px',
+            textAlign: 'center',
+            fontSize: '12px',
+            fontWeight: 600,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+          }}
+        >
+          DEMO MODE &mdash; data is simulated locally and is not on the live blockchain
+        </div>
+      )}
+
+      {/* 3. Wrong Network Banner */}
+      {isConnected && !isCorrectNetwork && !demoMode && (
+        <div
+          role="alert"
+          style={{
+            backgroundColor: 'var(--danger-bg)',
+            color: 'var(--danger)',
+            borderBottom: '1px solid var(--danger-border)',
+            padding: '8px 16px',
+            textAlign: 'center',
+            fontSize: '13px',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            gap: '12px',
+          }}
+        >
+          <span>Wrong network detected. Please switch to Tiramisu Testnet (Chain ID: 7738577).</span>
+          <button
+            onClick={switchNetwork}
+            className="btn btn-secondary btn-md"
+            style={{ fontSize: '12px', height: '28px', padding: '0 10px' }}
+          >
+            Switch Network
           </button>
         </div>
       )}
 
-      <header
+      {/* 4. Navigation Bar */}
+      <div
         style={{
-          borderBottom: '1px solid var(--border-subtle)',
-          backgroundColor: '#FFFFFF',
-          padding: '12px 24px',
+          maxWidth: 'var(--container-max)',
+          margin: '0 auto',
+          padding: isLandingPage ? '14px 24px' : '10px 24px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '16px',
         }}
       >
-        <div
-          style={{
-            maxWidth: 'var(--container-max)',
-            margin: '0 auto',
-            display: 'flex',
-            flexWrap: 'wrap',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: '16px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none' }}>
-              <img src="/logo.svg" alt="JanAudit" width="28" height="28" style={{ display: 'block' }} />
-              <div>
-                <div style={{ fontSize: '18px', fontWeight: '700', color: 'var(--text-main)', letterSpacing: '-0.02em', lineHeight: '1.2' }}>
-                  JanAudit
-                </div>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.2' }}>
-                  Supplies can be delayed. Truth cannot be deleted.
-                </div>
-              </div>
-            </Link>
+        {/* Left: Logo & Brand */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <Link
+            href="/"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              textDecoration: 'none',
+            }}
+          >
+            <img
+              src="/logo.svg"
+              alt="Krix"
+              width="26"
+              height="26"
+              style={{ display: 'block' }}
+            />
+            <span
+              style={{
+                fontSize: '19px',
+                fontWeight: 600,
+                color: 'var(--text-main)',
+                letterSpacing: '-0.02em',
+              }}
+            >
+              Krix
+            </span>
+          </Link>
 
-            <nav style={{ marginLeft: '16px', display: 'flex', gap: '14px', fontSize: '14px', borderLeft: '1px solid var(--border-subtle)', paddingLeft: '16px' }}>
-              <Link href="/" style={{ color: 'var(--text-main)', fontWeight: '500' }}>
-                Records
-              </Link>
-              <Link href="/new" style={{ color: 'var(--text-main)', fontWeight: '500' }}>
-                + New Record
-              </Link>
-              <Link href="/how-it-works" style={{ color: 'var(--text-main)', fontWeight: '500' }}>
-                How It Works
-              </Link>
-            </nav>
+          {/* Navigation Links (Desktop) */}
+          <nav
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '20px',
+              fontSize: '14px',
+            }}
+            className="nav-desktop"
+          >
+            {isLandingPage ? (
+              <>
+                <a href="#product" style={{ color: 'var(--text-muted)' }}>
+                  Product
+                </a>
+                <a href="#who-its-for" style={{ color: 'var(--text-muted)' }}>
+                  Who it&apos;s for
+                </a>
+                <Link href="/how-it-works" style={{ color: 'var(--text-muted)' }}>
+                  How it works
+                </Link>
+                <Link href="/records" style={{ color: 'var(--text-muted)' }}>
+                  Records
+                </Link>
+                <a href="#faq" style={{ color: 'var(--text-muted)' }}>
+                  FAQ
+                </a>
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/records"
+                  style={{
+                    color: pathname === '/records' ? 'var(--text-main)' : 'var(--text-muted)',
+                    fontWeight: pathname === '/records' ? 600 : 400,
+                  }}
+                >
+                  Records
+                </Link>
+                <Link
+                  href="/new"
+                  style={{
+                    color: pathname === '/new' ? 'var(--text-main)' : 'var(--text-muted)',
+                    fontWeight: pathname === '/new' ? 600 : 400,
+                  }}
+                >
+                  + New Record
+                </Link>
+                <Link
+                  href="/how-it-works"
+                  style={{
+                    color: pathname === '/how-it-works' ? 'var(--text-main)' : 'var(--text-muted)',
+                    fontWeight: pathname === '/how-it-works' ? 600 : 400,
+                  }}
+                >
+                  How It Works
+                </Link>
+              </>
+            )}
+          </nav>
+        </div>
+
+        {/* Right: Live Chain Indicator & Controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          {/* Live RPC Status Dot */}
+          <div
+            title={`RPC: ${activeRpc}`}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '12px',
+              color: 'var(--text-muted)',
+              cursor: 'help',
+            }}
+          >
+            <span
+              style={{
+                width: '7px',
+                height: '7px',
+                borderRadius: '50%',
+                backgroundColor:
+                  rpcStatus === 'connected'
+                    ? 'var(--success)'
+                    : rpcStatus === 'disconnected'
+                    ? 'var(--danger)'
+                    : 'var(--warning)',
+                display: 'inline-block',
+              }}
+            />
+            {rpcStatus === 'connected' ? (
+              <span className="mono" style={{ display: 'none' }} id="status-text-expanded">
+                #{liveBlock?.toString() || '...'}
+              </span>
+            ) : (
+              <span style={{ color: 'var(--danger)' }}>Offline</span>
+            )}
+            <span style={{ fontSize: '12px', color: 'var(--text-faint)' }}>
+              Tiramisu {liveBlock ? `#${liveBlock.toString()}` : ''}
+            </span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '13px' }}>
-            {/* Live RPC Status with Tooltip */}
-            <div
-              title={`Active RPC: ${activeRpc}`}
-              style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'help' }}
-            >
-              <span
-                style={{
-                  width: '8px',
-                  height: '8px',
-                  borderRadius: '50%',
-                  backgroundColor:
-                    rpcStatus === 'connected' ? 'var(--success)' : rpcStatus === 'disconnected' ? 'var(--danger)' : '#888',
-                  display: 'inline-block',
-                }}
-              />
-              {rpcStatus === 'connected' ? (
-                <span style={{ color: 'var(--text-main)' }}>
-                  Live: <strong>Tiramisu (7738577)</strong>, block{' '}
-                  <strong style={{ fontFamily: 'monospace' }}>#{liveBlock?.toString() || '...'}</strong>
-                </span>
-              ) : (
-                <span style={{ color: 'var(--danger)', fontWeight: '600' }}>Disconnected</span>
+          {/* Landing page "Open app" CTA */}
+          {isLandingPage ? (
+            <Link href="/records" className="btn btn-primary btn-md">
+              Open app &rarr;
+            </Link>
+          ) : (
+            <>
+              {/* App page: Faucet link & balance */}
+              {balanceGlm !== null && (
+                <div style={{ fontSize: '13px', color: 'var(--text-muted)' }} className="mono">
+                  {parseFloat(balanceGlm).toFixed(3)} $GLM
+                </div>
               )}
-            </div>
 
-            {/* Faucet Link & Balance */}
-            <div style={{ borderLeft: '1px solid var(--border-subtle)', paddingLeft: '12px' }}>
-              <span style={{ color: 'var(--text-muted)' }}>Bal: </span>
-              <strong>{balanceGlm} $GLM</strong>{' '}
-              <a href={FAUCET_URL} target="_blank" rel="noreferrer" style={{ fontSize: '12px', color: 'var(--primary)' }}>
-                [Faucet]
+              <a
+                href={FAUCET_URL}
+                target="_blank"
+                rel="noreferrer"
+                style={{ fontSize: '12px', color: 'var(--text-faint)' }}
+              >
+                Faucet
               </a>
-            </div>
 
-            {/* Demo wallet switcher ONLY in demo mode (Item 3) */}
-            {showDemoSwitcher && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <label style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Demo wallet:</label>
+              {/* Demo Persona Switcher (Only if active) */}
+              {showDemoSwitcher && (
                 <select
-                  style={{
-                    height: '32px',
-                    padding: '2px 8px',
-                    fontSize: '12px',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius)',
-                    background: '#FFFFFF',
-                  }}
-                  value={activeDemoWallet ? activeDemoWallet.address : address || ''}
+                  value={activeDemoWallet?.address || ''}
                   onChange={(e) => {
-                    const selected = PRESET_WALLETS.find((w) => w.address === e.target.value);
-                    if (selected) switchDemoWallet(selected);
+                    const match = PRESET_WALLETS.find((w) => w.address.toLowerCase() === e.target.value.toLowerCase());
+                    if (match) switchDemoWallet(match);
+                  }}
+                  style={{
+                    fontSize: '12px',
+                    padding: '4px 8px',
+                    height: '32px',
+                    backgroundColor: 'var(--bg-surface-raised)',
+                    borderColor: 'var(--border-strong)',
                   }}
                 >
                   {PRESET_WALLETS.map((w) => (
                     <option key={w.address} value={w.address}>
-                      {w.role} ({w.name.split(' ')[0]})
+                      {w.role} ({w.name.slice(0, 16)}...)
                     </option>
                   ))}
                 </select>
-              </div>
-            )}
+              )}
 
-            {/* Wallet Connect Button */}
-            {isConnected ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span
-                  style={{
-                    fontFamily: 'monospace',
-                    background: '#FFFFFF',
-                    padding: '4px 8px',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius)',
-                    fontSize: '12px',
-                  }}
-                  title={address || ''}
+              {/* Wallet Connect / Disconnect */}
+              {isConnected ? (
+                <button
+                  onClick={disconnect}
+                  className="btn btn-secondary btn-md mono"
+                  title="Click to disconnect"
+                  style={{ fontSize: '12px', height: '32px' }}
                 >
-                  {address ? `${address.slice(0, 6)}...${address.slice(-4)}` : ''}
-                </span>
-                <button onClick={disconnect} className="btn-secondary" style={{ height: '32px', padding: '0 8px', fontSize: '12px' }}>
-                  Disconnect
+                  {address ? `${address.slice(0, 6)}...${address.slice(-4)}` : 'Connected'}
                 </button>
-              </div>
-            ) : (
-              <button onClick={connectMetaMask} className="btn-primary" style={{ height: '32px', fontSize: '12px' }}>
-                Connect Wallet
-              </button>
-            )}
-          </div>
+              ) : (
+                <button
+                  onClick={connectMetaMask}
+                  className="btn btn-primary btn-md"
+                  style={{ fontSize: '13px', height: '32px' }}
+                >
+                  Connect Wallet
+                </button>
+              )}
+            </>
+          )}
         </div>
-      </header>
-    </>
+      </div>
+    </header>
   );
 }

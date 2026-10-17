@@ -4,7 +4,7 @@ import type { CivicRecordPayload, RecordRevision, GroundReportPayload, DispatchM
 
 const baseRecord: CivicRecordPayload = {
   type: 'civic_record',
-  reference_code: 'JA-MED-GNT-2026-ABC123',
+  reference_code: 'KX-MED-GNT-2026-ABC123',
   kind: 'MEDICINE_BATCH',
   title: '500 Dengue Testing Kits',
   quantity_dispatched: 500,
@@ -20,7 +20,7 @@ const baseRecord: CivicRecordPayload = {
 const baseManifest: DispatchManifestPayload = {
   type: 'dispatch_manifest',
   record_entity_key: '0x1111111111111111111111111111111111111111111111111111111111111111',
-  reference_code: 'JA-MED-GNT-2026-ABC123',
+  reference_code: 'KX-MED-GNT-2026-ABC123',
   kind: 'MEDICINE_BATCH',
   quantity_dispatched: 500,
   origin: 'State Warehouse, Vijayawada',

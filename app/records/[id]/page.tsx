@@ -98,15 +98,24 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
       setManifest(data.manifest);
       setNewQuantityReceived(data.record.payload.quantity_received || 0);
 
-      const repList = await fetchGroundReports(rawKey as Hex);
-      setReports(repList);
+      const [reps, revsData] = await Promise.all([
+        fetchGroundReports(rawKey as Hex),
+        fetchRecordRevisions(rawKey as Hex),
+      ]);
 
-      const revData = await fetchRecordRevisions(rawKey as Hex);
-      setRevisions(revData.revisions);
-      setCustodyChain(revData.custodyChain);
+      setReports(
+        reps.map((r) => ({
+          ...r,
+          blockNumber: r.createdAt,
+          txHash: (r as any).txHash || '',
+        }))
+      );
+
+      setRevisions(revsData.revisions);
+      setCustodyChain(revsData.custodyChain);
     } catch (err: any) {
-      console.error('Failed to load record details:', err);
-      setErrorMessage(err?.message || 'Unable to retrieve record from Tiramisu chain.');
+      console.error('Error loading record details:', err);
+      setErrorMessage(err?.message || 'Failed to load record details from chain.');
     } finally {
       setLoading(false);
     }
@@ -114,88 +123,76 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
 
   useEffect(() => {
     loadRecordDetails();
-  }, [rawKey, isKeyValid]);
+  }, [rawKey]);
 
-  const handleBlockChange = async (block: bigint | null) => {
-    setSelectedBlock(block);
-    if (block === null) {
-      setHistoricalRecord(null);
-      const allReps = await fetchGroundReports(rawKey as Hex);
-      setReports(allReps);
-      return;
-    }
+  // Check if current connected wallet is the on-chain custodian
+  const isOwner = Boolean(
+    address &&
+      recordMeta?.owner &&
+      address.toLowerCase() === recordMeta.owner.toLowerCase()
+  );
 
-    const matchingRev = revisions.find((r) => r.blockNumber === block);
-    if (matchingRev && matchingRev.rawPayload) {
-      setHistoricalRecord(matchingRev.rawPayload as CivicRecordPayload);
-    } else {
-      const hist = await fetchCivicRecordByKey(rawKey as Hex, block);
-      if (hist) setHistoricalRecord(hist.record.payload);
-    }
+  // All known custodians across history
+  const allCustodians = [
+    ...(recordMeta?.owner ? [recordMeta.owner] : []),
+    ...(recordMeta?.creator ? [recordMeta.creator] : []),
+    ...custodyChain.map((h) => h.wallet),
+  ];
 
-    const histReps = await fetchGroundReports(rawKey as Hex, block);
-    setReports(histReps);
-  };
-
+  // Run Cover-Up Detection Engine (lib/detect.ts)
   const handleRunCoverUpDetection = () => {
     if (!recordMeta) return;
     setDetecting(true);
-    setTimeout(() => {
-      const allCustodians = Array.from(
-        new Set([recordMeta.owner, recordMeta.creator, ...custodyChain.map((c) => c.wallet)])
-      );
 
+    try {
       const result = detectCoverUp({
         currentRecord: recordMeta.payload,
         manifest,
-        revisions,
         reports: reports.map((r) => ({
           key: r.key,
           blockNumber: r.blockNumber,
           txHash: r.txHash,
-          creator: r.creator,
+          creator: r.creator || '0x0',
           payload: r.payload,
         })),
+        revisions,
         custodianWallets: allCustodians,
       });
+
       setDetectionResult(result);
-      setDetecting(false);
-    }, 250);
-  };
-
-  // Lifetime Extension for Report or Record (Item 7)
-  const handleExtendLifetime = async (targetKey: Hex, label: string) => {
-    setActionLoading(true);
-    setToast({ type: 'pending', message: `Extending ${label} lifetime on Tiramisu...` });
-    try {
-      const client = getArkivClient();
-      const res = await extendEntityLifetimeOnChain(client, targetKey, 30);
-      setToast({ type: 'confirmed', message: `Lifetime Extension confirmed (+30 days)!`, txHash: res.txHash });
-      loadRecordDetails();
     } catch (err: any) {
-      setToast({ type: 'failed', message: `Extension failed: ${err.message}` });
+      console.error('Detection engine error:', err);
     } finally {
-      setActionLoading(false);
+      setDetecting(false);
     }
   };
 
-  const handleTestImmutability = async (reportKey: Hex) => {
-    const client = getArkivClient();
-    const result = await attemptIllegalReportPatch(client, reportKey);
-    if (!result.success) {
-      alert(`ON-CHAIN INTEGRITY VERIFIED:\nUnauthorized mutation was rejected.\n${result.error}`);
-    } else {
-      alert('Warning: entity mutation was accepted.');
+  // Time-Travel block scrubber handler (Item 7)
+  const handleBlockChange = async (block: bigint | null) => {
+    setSelectedBlock(block);
+    if (block === null) {
+      setHistoricalRecord(null);
+      return;
+    }
+
+    try {
+      const histData = await fetchCivicRecordByKey(rawKey as Hex, block);
+      if (histData) {
+        setHistoricalRecord(histData.record.payload);
+      }
+    } catch (err) {
+      console.warn('Historical block fetch fallback:', err);
     }
   };
 
-  // Status Update (Item 4: Enforces state machine & receiver confirmation)
+  // Custodian: Update Transit Status (patchCivicRecordOnChain, Item 2, Item 4)
   const handleUpdateStatus = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!recordMeta) return;
 
     setActionLoading(true);
-    setToast({ type: 'pending', message: 'Executing patchEntity on Tiramisu chain...' });
+    setToast({ type: 'pending', message: 'Submitting status update to Arkiv...' });
+
     try {
       const client = getArkivClient();
       const res = await patchCivicRecordOnChain(
@@ -204,84 +201,140 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
         {
           status: newStatusValue,
           quantity_received: newQuantityReceived,
-          notes: statusNotes,
+          notes: statusNotes.trim() || undefined,
         },
         recordMeta.payload
       );
-      setToast({ type: 'confirmed', message: `Status updated to ${newStatusValue}!`, txHash: res.txHash });
+
+      setToast({
+        type: 'confirmed',
+        message: `Status updated to ${newStatusValue}!`,
+        txHash: res.txHash,
+      });
+
       setShowStatusModal(false);
       setShowReceiverConfirmModal(false);
-      loadRecordDetails();
+      await loadRecordDetails();
     } catch (err: any) {
-      setToast({ type: 'failed', message: `Update failed: ${err.message}` });
+      console.error('Status patch error:', err);
+      setToast({ type: 'failed', message: err?.message || 'Failed to update record on-chain.' });
     } finally {
       setActionLoading(false);
     }
   };
 
-  // Custody Handover (Item 4: Address validation, irreversibility warning)
+  // Custodian: Transfer Custody Handover (changeRecordCustodyOnChain, Item 4)
   const handleHandoverCustody = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!recordMeta || !newOwnerAddress) return;
+    if (!recordMeta) return;
+
+    if (!isAddress(newOwnerAddress) || newOwnerAddress === '0x0000000000000000000000000000000000000000') {
+      alert('Please enter a valid, non-zero Ethereum wallet address.');
+      return;
+    }
+
+    if (address && getAddress(newOwnerAddress) === getAddress(address)) {
+      alert('Destination custodian cannot be your own wallet address.');
+      return;
+    }
 
     if (!handoverConfirmed) {
-      alert('You must confirm that you understand this custody transfer is irreversible.');
+      alert('Please check the confirmation box acknowledging this action is irreversible.');
       return;
     }
 
     setActionLoading(true);
-    setToast({ type: 'pending', message: 'Executing changeOwnership custody transfer...' });
+    setToast({ type: 'pending', message: 'Signing irreversible custody transfer...' });
+
     try {
       const client = getArkivClient();
-      const res = await changeRecordCustodyOnChain(
-        client,
-        recordMeta.key,
-        newOwnerAddress
-      );
-      setToast({ type: 'confirmed', message: `Custody transferred to ${newOwnerAddress.slice(0, 8)}...`, txHash: res.txHash });
+      const res = await changeRecordCustodyOnChain(client, recordMeta.key, newOwnerAddress.trim());
+
+      setToast({
+        type: 'confirmed',
+        message: 'Custody transferred! You have surrendered write access.',
+        txHash: res.txHash,
+      });
+
       setShowCustodyModal(false);
-      loadRecordDetails();
+      setNewOwnerAddress('');
+      setHandoverConfirmed(false);
+      await loadRecordDetails();
     } catch (err: any) {
-      setToast({ type: 'failed', message: `Handover failed: ${err.message}` });
+      console.error('Handover error:', err);
+      setToast({ type: 'failed', message: err?.message || 'Custody transfer failed.' });
     } finally {
       setActionLoading(false);
     }
   };
 
-  // Export Evidence (Item 11: Fresh data + SHA-256 hash)
+  // Lifetime Extension (Item 7)
+  const handleExtendLifetime = async (entityKey: Hex, entityType: string) => {
+    setActionLoading(true);
+    setToast({ type: 'pending', message: `Extending ${entityType} lifetime on-chain...` });
+
+    try {
+      const client = getArkivClient();
+      const res = await extendEntityLifetimeOnChain(client, entityKey, 30);
+      setToast({
+        type: 'confirmed',
+        message: `Successfully extended ${entityType} lifetime by 30 days!`,
+        txHash: res.txHash,
+      });
+      await loadRecordDetails();
+    } catch (err: any) {
+      console.error('Extend lifetime error:', err);
+      setToast({ type: 'failed', message: err?.message || 'Failed to extend entity lifetime.' });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Immutability test demo (Item 3)
+  const handleTestImmutability = async (reportKey: Hex) => {
+    try {
+      const client = getArkivClient();
+      const res = await attemptIllegalReportPatch(client, reportKey);
+      if (!res.success) {
+        alert(`IMMUTABILITY VERIFIED ON-CHAIN:\n${res.error}`);
+      } else {
+        alert('Unexpected: Entity was modified.');
+      }
+    } catch (err: any) {
+      alert(`IMMUTABILITY VERIFIED ON-CHAIN:\n${err?.message}`);
+    }
+  };
+
+  // Evidence package export (Item 10)
   const handleExportEvidence = async () => {
     if (!recordMeta) return;
 
-    const exportPayload = {
-      recordEntityKey: recordMeta.key,
-      referenceCode: recordMeta.payload.reference_code,
-      title: recordMeta.payload.title,
-      dispatched: recordMeta.payload.quantity_dispatched,
-      received: recordMeta.payload.quantity_received,
-      status: recordMeta.payload.status,
+    const exportData = {
+      record_id: recordMeta.payload.reference_code,
+      canonical_entity_key: recordMeta.key,
+      export_timestamp: new Date().toISOString(),
+      record: recordMeta.payload,
       manifest,
+      custody_chain: custodyChain,
       revisions,
       reports: reports.map((r) => ({
-        key: r.key,
+        entity_key: r.key,
         reporter: r.creator,
-        verdict: r.payload.verdict,
-        severity: r.payload.severity,
-        blockNumber: r.blockNumber.toString(),
-        photoCids: r.payload.photo_cids,
+        block: r.blockNumber.toString(),
+        tx_hash: r.txHash,
+        payload: r.payload,
       })),
-      detectionResult,
-      exportedAt: new Date().toISOString(),
+      detection_result: detectionResult,
     };
 
-    const jsonString = JSON.stringify(exportPayload, (_, v) => (typeof v === 'bigint' ? v.toString() : v), 2);
-
-    let sha256Hex = '';
+    const jsonString = JSON.stringify(exportData, null, 2);
+    let sha256Hex = 'Unavailable';
     if (typeof crypto !== 'undefined' && crypto.subtle) {
       const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(jsonString));
       sha256Hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
     }
 
-    const blob = new Blob([`// JanAudit Cryptographic Evidence Export\n// SHA-256 Checksum: ${sha256Hex}\n\n${jsonString}`], {
+    const blob = new Blob([`// Krix Cryptographic Evidence Export\n// SHA-256 Checksum: ${sha256Hex}\n\n${jsonString}`], {
       type: 'application/json',
     });
     const url = URL.createObjectURL(blob);
@@ -294,86 +347,88 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
 
   if (!isKeyValid) {
     return (
-      <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', padding: '40px 24px', textAlign: 'center' }}>
-        <h2 style={{ fontSize: '18px', color: 'var(--danger)', margin: '0 0 8px 0' }}>Invalid Entity Key Format</h2>
-        <p style={{ color: 'var(--text-muted)', fontSize: '14px', margin: '0 0 16px 0' }}>
-          "{rawKey}" is not a valid 32-byte hex Arkiv entity key.
-        </p>
-        <Link href="/" className="btn-primary">
-          Return to Dashboard
-        </Link>
+      <div className="app-container" style={{ textAlign: 'center', paddingTop: '80px' }}>
+        <div className="card" style={{ maxWidth: '520px', margin: '0 auto', padding: '36px' }}>
+          <div className="eyebrow" style={{ color: 'var(--danger)' }}>MALFORMED ENTITY KEY</div>
+          <h2 style={{ fontSize: '24px', fontWeight: 600, margin: '0 0 12px 0' }}>Record Not Found</h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: '15px', lineHeight: 1.6, marginBottom: '24px' }}>
+            The provided URL parameter &ldquo;<code className="mono">{rawKey}</code>&rdquo; is not a valid 32-byte Arkiv entity key.
+          </p>
+          <Link href="/records" className="btn btn-primary btn-md">
+            Return to Records
+          </Link>
+        </div>
       </div>
     );
   }
 
   if (loading) {
     return (
-      <div style={{ padding: '60px 0', textAlign: 'center' }}>
-        <div style={{ fontSize: '15px', color: 'var(--text-muted)' }}>Querying record & manifest from Arkiv chain...</div>
+      <div className="app-container">
+        <div className="skeleton" style={{ height: '40px', width: '220px', marginBottom: '16px' }} />
+        <div className="skeleton" style={{ height: '140px', width: '100%', marginBottom: '24px' }} />
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px' }}>
+          <div className="skeleton" style={{ height: '360px', width: '100%' }} />
+          <div className="skeleton" style={{ height: '360px', width: '100%' }} />
+        </div>
       </div>
     );
   }
 
   if (!recordMeta) {
     return (
-      <div style={{ background: 'var(--bg-surface)', border: '1px dashed var(--border-strong)', borderRadius: 'var(--radius)', padding: '40px 24px', textAlign: 'center' }}>
-        <h2 style={{ fontSize: '18px', margin: '0 0 8px 0' }}>Record Not Found</h2>
-        <p style={{ color: 'var(--text-muted)', fontSize: '14px', margin: '0 0 16px 0' }}>
-          No entity exists on the Tiramisu testnet for key <span style={{ fontFamily: 'monospace' }}>{rawKey}</span>.
-        </p>
-        <Link href="/" className="btn-primary">
-          Back to Records
-        </Link>
+      <div className="app-container" style={{ textAlign: 'center', paddingTop: '80px' }}>
+        <div className="card" style={{ maxWidth: '520px', margin: '0 auto', padding: '36px' }}>
+          <div className="eyebrow" style={{ color: 'var(--text-faint)' }}>NOT FOUND ON CHAIN</div>
+          <h2 style={{ fontSize: '24px', fontWeight: 600, margin: '0 0 12px 0' }}>Record Does Not Exist</h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: '15px', lineHeight: 1.6, marginBottom: '24px' }}>
+            No entity found on Tiramisu for key <code className="mono">{rawKey.slice(0, 16)}...</code>.
+          </p>
+          <Link href="/records" className="btn btn-primary btn-md">
+            Return to Records
+          </Link>
+        </div>
       </div>
     );
   }
 
-  const record = historicalRecord || recordMeta.payload;
-  const isOwner =
-    address && recordMeta.owner && address.toLowerCase() === recordMeta.owner.toLowerCase();
-
-  const revisionBlocks = Array.from(
-    new Set([
-      recordMeta.createdAt,
-      ...revisions.map((r) => r.blockNumber),
-      ...reports.map((r) => r.blockNumber),
-    ])
-  ).filter((b) => b > 0n);
-
+  const record = recordMeta.payload;
   const dispatched = record.quantity_dispatched || 0;
   const received = record.quantity_received || 0;
   const deficit = Math.max(0, dispatched - received);
 
-  const getStatusBadgeClass = (status: string) => {
-    switch (status) {
-      case 'DELIVERED':
-      case 'ALL_GOOD_DELIVERED':
-        return 'badge-green';
-      case 'DAMAGED':
-        return 'badge-red';
-      case 'IN_TRANSIT':
-        return 'badge-blue';
-      case 'PARTIAL':
-        return 'badge-amber';
-      default:
-        return 'badge-default';
-    }
-  };
+  // Calculate average citizen reported units
+  const validReportCounts = reports.filter((r) => r.payload.count_received !== undefined);
+  const avgReported =
+    validReportCounts.length > 0
+      ? Math.round(validReportCounts.reduce((acc, cur) => acc + (cur.payload.count_received || 0), 0) / validReportCounts.length)
+      : null;
 
-  const allCustodians = Array.from(
-    new Set([recordMeta.owner, recordMeta.creator, ...custodyChain.map((c) => c.wallet)])
-  );
+  // Revision blocks for time travel scrubber
+  const revisionBlocks = Array.from(
+    new Set([recordMeta.createdAt, ...revisions.map((r) => r.blockNumber), ...reports.map((rp) => rp.blockNumber)])
+  ).filter((b) => b > 0n);
+
+  let statusBadgeClass = 'badge-default';
+  if (record.status === 'ALL_GOOD_DELIVERED' || record.status === 'DELIVERED') {
+    statusBadgeClass = 'badge-success';
+  } else if (record.status === 'DAMAGED') {
+    statusBadgeClass = 'badge-danger';
+  } else if (record.status === 'IN_TRANSIT' || record.status === 'PARTIAL') {
+    statusBadgeClass = 'badge-warning';
+  }
 
   return (
-    <div>
+    <div className="app-container">
       {/* Toast Notification */}
       {toast && (
         <div
+          role="status"
           style={{
             position: 'fixed',
             bottom: '24px',
             right: '24px',
-            backgroundColor: '#FFFFFF',
+            backgroundColor: 'var(--bg-surface-raised)',
             border: `1px solid ${
               toast.type === 'confirmed'
                 ? 'var(--success-border)'
@@ -381,9 +436,8 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
                 ? 'var(--danger-border)'
                 : 'var(--border-strong)'
             }`,
-            borderRadius: 'var(--radius)',
-            padding: '12px 16px',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+            borderRadius: 'var(--radius-card)',
+            padding: '14px 18px',
             zIndex: 2000,
             maxWidth: '380px',
             fontSize: '13px',
@@ -397,20 +451,20 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
                     ? 'var(--success)'
                     : toast.type === 'failed'
                     ? 'var(--danger)'
-                    : 'var(--primary)',
+                    : 'var(--accent)',
               }}
             >
               {toast.type === 'pending' ? 'TRANSACTION PENDING' : toast.type === 'confirmed' ? 'TRANSACTION CONFIRMED' : 'TRANSACTION FAILED'}
             </strong>
-            <button onClick={() => setToast(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999' }}>
-              ✕
+            <button onClick={() => setToast(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)' }}>
+              &times;
             </button>
           </div>
-          <div style={{ marginTop: '4px' }}>{toast.message}</div>
+          <div style={{ marginTop: '4px', color: 'var(--text-main)' }}>{toast.message}</div>
           {toast.txHash && (
             <div style={{ marginTop: '6px' }}>
-              <a href={`${EXPLORER_URL}/tx/${toast.txHash}`} target="_blank" rel="noreferrer" style={{ fontSize: '11px', fontFamily: 'monospace' }}>
-                View on Explorer →
+              <a href={`${EXPLORER_URL}/tx/${toast.txHash}`} target="_blank" rel="noreferrer" className="mono" style={{ fontSize: '11px', color: 'var(--accent)' }}>
+                View on Explorer &rarr;
               </a>
             </div>
           )}
@@ -419,42 +473,40 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
 
       {/* Breadcrumb */}
       <div style={{ marginBottom: '16px', fontSize: '13px' }}>
-        <Link href="/" style={{ color: 'var(--primary)', fontWeight: '500' }}>
-          ← Back to Records
+        <Link href="/records" style={{ color: 'var(--accent)', fontWeight: 500 }}>
+          &larr; Back to Records
         </Link>{' '}
-        / <span style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>{record.reference_code}</span>
+        / <span className="mono" style={{ color: 'var(--text-muted)' }}>{record.reference_code}</span>
       </div>
 
       {/* Header Card */}
       <div
+        className="card"
         style={{
-          background: 'var(--bg-surface)',
-          border: '1px solid var(--border-subtle)',
-          borderRadius: 'var(--radius)',
+          marginBottom: '28px',
           padding: '24px',
-          marginBottom: '24px',
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
           <div>
-            <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              {record.kind} · REF: {record.reference_code}
+            <div className="eyebrow" style={{ marginBottom: '4px' }}>
+              {record.kind} &middot; REF: {record.reference_code}
             </div>
-            <h1 style={{ fontSize: '24px', fontWeight: '600', margin: '4px 0 8px 0', letterSpacing: '-0.01em' }}>
+            <h1 style={{ fontSize: '26px', fontWeight: 600, margin: '4px 0 8px 0', letterSpacing: '-0.01em', color: 'var(--text-main)' }}>
               {record.title}
             </h1>
             <div style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
-              Origin: <strong style={{ color: 'var(--text-main)' }}>{record.origin}</strong> → Destination:{' '}
+              Origin: <strong style={{ color: 'var(--text-main)' }}>{record.origin}</strong> &rarr; Destination:{' '}
               <strong style={{ color: 'var(--text-main)' }}>{record.destination}</strong> | District:{' '}
               <strong style={{ color: 'var(--text-main)' }}>{record.district} ({record.ward_id})</strong>
             </div>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px' }}>
-            <span className={`badge ${getStatusBadgeClass(record.status)}`} style={{ fontSize: '14px', padding: '4px 12px' }}>
-              {record.status}
+            <span className={`badge ${statusBadgeClass}`} style={{ fontSize: '13px', padding: '4px 12px' }}>
+              {record.status.replace(/_/g, ' ')}
             </span>
-            <button onClick={handleExportEvidence} className="btn-secondary" style={{ height: '32px', fontSize: '12px' }}>
+            <button onClick={handleExportEvidence} className="btn btn-secondary btn-md" style={{ fontSize: '12px' }}>
               Export Evidence (JSON + SHA256)
             </button>
           </div>
@@ -474,10 +526,10 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
           }}
         >
           <div>
-            Current Custodian:{' '}
-            <span style={{ fontFamily: 'monospace', fontWeight: '600' }}>{recordMeta.owner}</span>{' '}
+            <span style={{ color: 'var(--text-muted)' }}>Current Custodian:</span>{' '}
+            <span className="mono" style={{ fontWeight: 600, color: 'var(--text-main)' }}>{recordMeta.owner}</span>{' '}
             {isOwner ? (
-              <span className="badge badge-green" style={{ marginLeft: '6px' }}>
+              <span className="badge badge-success" style={{ marginLeft: '6px' }}>
                 YOU ARE CURRENT CUSTODIAN
               </span>
             ) : (
@@ -487,8 +539,8 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
             )}
           </div>
           <div>
-            Entity Key:{' '}
-            <a href={`${EXPLORER_URL}/address/${recordMeta.key}`} target="_blank" rel="noreferrer" style={{ fontFamily: 'monospace' }}>
+            <span style={{ color: 'var(--text-muted)' }}>Entity Key:</span>{' '}
+            <a href={`${EXPLORER_URL}/address/${recordMeta.key}`} target="_blank" rel="noreferrer" className="mono" style={{ color: 'var(--accent)' }}>
               {recordMeta.key.slice(0, 18)}...
             </a>
           </div>
@@ -498,19 +550,18 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
         {manifest && (
           <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--text-muted)' }}>
             Companion Manifest:{' '}
-            <a href={`${EXPLORER_URL}/address/${manifest.record_entity_key}`} target="_blank" rel="noreferrer" style={{ fontFamily: 'monospace' }}>
+            <a href={`${EXPLORER_URL}/address/${manifest.record_entity_key}`} target="_blank" rel="noreferrer" className="mono" style={{ color: 'var(--accent)' }}>
               [dispatch_manifest verified readonly on-chain]
             </a>
           </div>
         )}
 
         {/* Actions (Custodian gated) */}
-        <div style={{ marginTop: '16px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ marginTop: '18px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
           <button
             onClick={() => setShowStatusModal(true)}
             disabled={!isOwner}
-            className="btn-secondary"
-            style={{ fontSize: '13px' }}
+            className="btn btn-secondary btn-md"
             title={!isOwner ? 'Only current on-chain custodian may update status' : undefined}
           >
             Update Transit Status
@@ -519,38 +570,35 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
           <button
             onClick={() => setShowReceiverConfirmModal(true)}
             disabled={!isOwner}
-            className="btn-secondary"
-            style={{ fontSize: '13px' }}
+            className="btn btn-secondary btn-md"
             title={!isOwner ? 'Only current on-chain custodian may record receipt' : undefined}
           >
-            Receiver Confirmation (Quantity Received)
+            Receiver Confirmation
           </button>
 
           <button
             onClick={() => setShowCustodyModal(true)}
             disabled={!isOwner}
-            className="btn-secondary"
-            style={{ fontSize: '13px' }}
+            className="btn btn-secondary btn-md"
             title={!isOwner ? 'Only current on-chain custodian may handover custody' : undefined}
           >
-            Handover Custody (changeOwnership)
+            Handover Custody
           </button>
 
           <button
             onClick={() => handleExtendLifetime(recordMeta.key, 'Record')}
             disabled={actionLoading}
-            className="btn-secondary"
-            style={{ fontSize: '13px' }}
+            className="btn btn-secondary btn-md"
           >
             Extend Record Lifetime (+365d)
           </button>
 
           <button
             onClick={() => setShowReportModal(true)}
-            className="btn-primary"
-            style={{ marginLeft: 'auto', fontSize: '13px' }}
+            className="btn btn-primary btn-md"
+            style={{ marginLeft: 'auto' }}
           >
-            + Submit Ground Reality Form (Immutable)
+            + Submit Ground Reality Form
           </button>
         </div>
       </div>
@@ -559,7 +607,7 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px', alignItems: 'start' }}>
         {/* Left Column */}
         <div style={{ gridColumn: 'span 2' }}>
-          {/* Time-Travel Slider (Item 7: Revisions only) */}
+          {/* Time-Travel Slider */}
           <TimeTravelSlider
             currentRecord={recordMeta.payload}
             historicalBlocks={revisionBlocks}
@@ -577,49 +625,45 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
 
           {/* Reports List */}
           <div
+            className="card"
             style={{
-              background: 'var(--bg-surface)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius)',
-              padding: '20px',
               marginBottom: '24px',
+              padding: '24px',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
               <div>
-                <h2 style={{ fontSize: '18px', fontWeight: '600', margin: '0 0 2px 0' }}>
+                <h2 style={{ fontSize: '18px', fontWeight: 600, margin: '0 0 2px 0', color: 'var(--text-main)' }}>
                   Immutable Ground Reports ({reports.length})
                 </h2>
                 <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
                   Uncensorable submissions linked to canonical entity key.
                 </div>
               </div>
-              <button onClick={() => setShowReportModal(true)} className="btn-primary" style={{ height: '32px', fontSize: '12px' }}>
+              <button onClick={() => setShowReportModal(true)} className="btn btn-primary btn-md" style={{ height: '32px', fontSize: '12px' }}>
                 + Submit Report
               </button>
             </div>
 
             {reports.length === 0 ? (
-              <div style={{ border: '1px dashed var(--border-strong)', borderRadius: 'var(--radius)', padding: '30px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '14px' }}>
+              <div style={{ border: '1px dashed var(--border-strong)', borderRadius: 'var(--radius-card)', padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '14px' }}>
                 No ground reports filed yet for this batch.
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 {reports.map((rep, idx) => {
                   const isCustodian = allCustodians.some((c) => c.toLowerCase() === rep.creator.toLowerCase());
+                  const isDefect = rep.payload.verdict === 'DAMAGED' || rep.payload.verdict === 'EXPIRED';
+
                   return (
                     <div
                       key={idx}
                       style={{
                         border: '1px solid var(--border-subtle)',
-                        borderRadius: 'var(--radius)',
+                        borderRadius: 'var(--radius-card)',
                         padding: '16px',
-                        background: '#FFFFFF',
-                        borderLeft: `4px solid ${
-                          rep.payload.verdict === 'DAMAGED' || rep.payload.verdict === 'EXPIRED'
-                            ? 'var(--danger)'
-                            : 'var(--success)'
-                        }`,
+                        backgroundColor: 'var(--bg-surface-raised)',
+                        borderLeft: `3px solid ${isDefect ? 'var(--danger)' : 'var(--success)'}`,
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
@@ -628,11 +672,11 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
                             {rep.payload.reporter_role} (Self-declared)
                           </span>
                           {isCustodian && (
-                            <span className="badge badge-amber" style={{ fontWeight: '600' }}>
+                            <span className="badge badge-warning">
                               SUBMITTED BY CUSTODIAN
                             </span>
                           )}
-                          <span className={`badge ${rep.payload.verdict === 'DAMAGED' || rep.payload.verdict === 'EXPIRED' ? 'badge-red' : 'badge-green'}`}>
+                          <span className={`badge ${isDefect ? 'badge-danger' : 'badge-success'}`}>
                             {rep.payload.verdict}
                           </span>
                           <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
@@ -640,11 +684,10 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
                           </span>
                         </div>
 
-                        {/* Immutability proof: Only in demo mode or how it works (Item 3) */}
                         {demoMode && (
                           <button
                             onClick={() => handleTestImmutability(rep.key)}
-                            className="btn-secondary"
+                            className="btn btn-secondary btn-md"
                             style={{ height: '26px', padding: '0 8px', fontSize: '11px' }}
                           >
                             [Demo: Test Immutability]
@@ -652,7 +695,7 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
                         )}
                       </div>
 
-                      <p style={{ margin: '8px 0', fontSize: '14px', color: 'var(--text-main)', lineHeight: '1.5' }}>
+                      <p style={{ margin: '8px 0', fontSize: '14px', color: 'var(--text-main)', lineHeight: 1.6 }}>
                         {rep.payload.description}
                       </p>
 
@@ -672,9 +715,9 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
                                 key={cIdx}
                                 style={{
                                   border: '1px solid var(--border-subtle)',
-                                  borderRadius: 'var(--radius)',
+                                  borderRadius: 'var(--radius-btn)',
                                   padding: '6px',
-                                  background: '#FAFAFA',
+                                  backgroundColor: 'var(--bg-surface)',
                                 }}
                               >
                                 <a href={gateways[0]} target="_blank" rel="noreferrer">
@@ -683,7 +726,6 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
                                     alt="Proof evidence"
                                     style={{ width: '90px', height: '65px', objectFit: 'cover', borderRadius: '4px', display: 'block' }}
                                     onError={(e) => {
-                                      // Fallback to secondary gateway if primary fails
                                       if (gateways[1] && (e.target as HTMLImageElement).src !== gateways[1]) {
                                         (e.target as HTMLImageElement).src = gateways[1];
                                       } else {
@@ -691,7 +733,7 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
                                       }
                                     }}
                                   />
-                                  <span style={{ fontSize: '11px', display: 'block', marginTop: '4px' }}>
+                                  <span style={{ fontSize: '11px', display: 'block', marginTop: '4px', color: 'var(--accent)' }}>
                                     [IPFS Photo]
                                   </span>
                                 </a>
@@ -701,39 +743,18 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
                         </div>
                       )}
 
-                      <div
-                        style={{
-                          marginTop: '12px',
-                          paddingTop: '10px',
-                          borderTop: '1px solid var(--border-subtle)',
-                          fontSize: '12px',
-                          color: 'var(--text-muted)',
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          flexWrap: 'wrap',
-                          gap: '8px',
-                        }}
-                      >
+                      <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '12px', paddingTop: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: 'var(--text-faint)' }}>
                         <div>
-                          Block #{rep.blockNumber.toString()} | Reporter:{' '}
-                          <span style={{ fontFamily: 'monospace' }}>{rep.creator.slice(0, 10)}...</span> | Tx:{' '}
-                          <a href={`${EXPLORER_URL}/tx/${rep.txHash}`} target="_blank" rel="noreferrer">
-                            {rep.txHash.slice(0, 12)}...
-                          </a>
+                          Reporter: <span className="mono">{rep.creator.slice(0, 10)}...</span> &middot; Block #{rep.blockNumber.toString()}
                         </div>
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <span>Expires: #{rep.expiresAt.toString()}</span>
-                          <button
-                            onClick={() => handleExtendLifetime(rep.key, 'Report')}
-                            disabled={actionLoading}
-                            className="btn-secondary"
-                            style={{ height: '28px', padding: '0 8px', fontSize: '11px' }}
-                          >
-                            Extend Life (+30d)
-                          </button>
-                        </div>
+                        <button
+                          onClick={() => handleExtendLifetime(rep.key, 'Report')}
+                          disabled={actionLoading}
+                          className="btn btn-secondary btn-md"
+                          style={{ height: '26px', fontSize: '11px', padding: '0 8px' }}
+                        >
+                          Extend Life (+30d)
+                        </button>
                       </div>
                     </div>
                   );
@@ -742,47 +763,47 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
             )}
           </div>
 
-          {/* Revision History */}
+          {/* Revisions Table */}
           <div
+            className="card"
             style={{
-              background: 'var(--bg-surface)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius)',
-              padding: '20px',
+              padding: '24px',
             }}
           >
-            <h2 style={{ fontSize: '18px', fontWeight: '600', margin: '0 0 12px 0' }}>
+            <h2 style={{ fontSize: '18px', fontWeight: 600, margin: '0 0 14px 0', color: 'var(--text-main)' }}>
               On-Chain Revision History
             </h2>
             {revisions.length === 0 ? (
               <div style={{ fontSize: '14px', color: 'var(--text-muted)' }}>Initial record creation recorded.</div>
             ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                <thead>
-                  <tr style={{ background: '#FAFAFA', borderBottom: '1px solid var(--border-subtle)' }}>
-                    <th style={{ padding: '8px 12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>Block</th>
-                    <th style={{ padding: '8px 12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>Operation</th>
-                    <th style={{ padding: '8px 12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>Updater</th>
-                    <th style={{ padding: '8px 12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>Status</th>
-                    <th style={{ padding: '8px 12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>Tx</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {revisions.map((rev, idx) => (
-                    <tr key={idx} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                      <td style={{ padding: '8px 12px', fontFamily: 'monospace' }}>#{rev.blockNumber.toString()}</td>
-                      <td style={{ padding: '8px 12px', fontWeight: '600' }}>{rev.type}</td>
-                      <td style={{ padding: '8px 12px', fontFamily: 'monospace' }}>{rev.updater.slice(0, 10)}...</td>
-                      <td style={{ padding: '8px 12px' }}>{rev.status || '-'}</td>
-                      <td style={{ padding: '8px 12px', fontFamily: 'monospace' }}>
-                        <a href={`${EXPLORER_URL}/tx/${rev.txHash}`} target="_blank" rel="noreferrer">
-                          {rev.txHash.slice(0, 14)}...
-                        </a>
-                      </td>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: 'var(--bg-surface-raised)', borderBottom: '1px solid var(--border-subtle)' }}>
+                      <th style={{ padding: '10px 12px', textAlign: 'left', color: 'var(--text-faint)', fontSize: '11px', textTransform: 'uppercase' }}>Block</th>
+                      <th style={{ padding: '10px 12px', textAlign: 'left', color: 'var(--text-faint)', fontSize: '11px', textTransform: 'uppercase' }}>Operation</th>
+                      <th style={{ padding: '10px 12px', textAlign: 'left', color: 'var(--text-faint)', fontSize: '11px', textTransform: 'uppercase' }}>Updater</th>
+                      <th style={{ padding: '10px 12px', textAlign: 'left', color: 'var(--text-faint)', fontSize: '11px', textTransform: 'uppercase' }}>Status</th>
+                      <th style={{ padding: '10px 12px', textAlign: 'left', color: 'var(--text-faint)', fontSize: '11px', textTransform: 'uppercase' }}>Tx</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {revisions.map((rev, idx) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                        <td className="mono" style={{ padding: '10px 12px' }}>#{rev.blockNumber.toString()}</td>
+                        <td style={{ padding: '10px 12px', fontWeight: 600, color: 'var(--text-main)' }}>{rev.type}</td>
+                        <td className="mono" style={{ padding: '10px 12px', color: 'var(--text-muted)' }}>{rev.updater.slice(0, 10)}...</td>
+                        <td style={{ padding: '10px 12px' }}>{rev.status || '-'}</td>
+                        <td className="mono" style={{ padding: '10px 12px' }}>
+                          <a href={`${EXPLORER_URL}/tx/${rev.txHash}`} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>
+                            {rev.txHash.slice(0, 14)}...
+                          </a>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
@@ -791,14 +812,12 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           {/* Vertical Custody Stepper */}
           <div
+            className="card"
             style={{
-              background: 'var(--bg-surface)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius)',
-              padding: '20px',
+              padding: '24px',
             }}
           >
-            <h3 style={{ fontSize: '16px', fontWeight: '600', margin: '0 0 14px 0' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 600, margin: '0 0 16px 0', color: 'var(--text-main)' }}>
               Chain of Custody Stepper
             </h3>
             {custodyChain.length === 0 ? (
@@ -810,14 +829,14 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                       <div
                         style={{
-                          width: '24px',
-                          height: '24px',
+                          width: '26px',
+                          height: '26px',
                           borderRadius: '50%',
-                          backgroundColor: i === custodyChain.length - 1 ? 'var(--primary)' : '#FFFFFF',
-                          border: `2px solid ${i === custodyChain.length - 1 ? 'var(--primary)' : 'var(--border-strong)'}`,
-                          color: i === custodyChain.length - 1 ? '#FFFFFF' : 'var(--text-muted)',
+                          backgroundColor: i === custodyChain.length - 1 ? 'var(--accent)' : 'var(--bg-surface-raised)',
+                          border: `2px solid ${i === custodyChain.length - 1 ? 'var(--accent)' : 'var(--border-strong)'}`,
+                          color: i === custodyChain.length - 1 ? 'var(--on-accent)' : 'var(--text-muted)',
                           fontSize: '11px',
-                          fontWeight: '700',
+                          fontWeight: 700,
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
@@ -830,15 +849,15 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
                       )}
                     </div>
                     <div>
-                      <div style={{ fontSize: '12px', fontWeight: '600', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', color: 'var(--text-faint)' }}>
                         Hop #{i + 1} Custodian
                       </div>
-                      <div style={{ fontFamily: 'monospace', fontSize: '13px', fontWeight: '600', color: 'var(--text-main)' }}>
+                      <div className="mono" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-main)' }}>
                         {hop.wallet.slice(0, 10)}...{hop.wallet.slice(-4)}
                       </div>
                       <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                        Block #{hop.blockNumber.toString()} ·{' '}
-                        <a href={`${EXPLORER_URL}/tx/${hop.txHash}`} target="_blank" rel="noreferrer">
+                        Block #{hop.blockNumber.toString()} &middot;{' '}
+                        <a href={`${EXPLORER_URL}/tx/${hop.txHash}`} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>
                           Tx Link
                         </a>
                       </div>
@@ -849,45 +868,36 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
             )}
           </div>
 
-          {/* Quantity Reconciliation */}
+          {/* Quantity Reconciliation Bar */}
           <div
+            className="card"
             style={{
-              background: 'var(--bg-surface)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius)',
-              padding: '20px',
+              padding: '24px',
             }}
           >
-            <h3 style={{ fontSize: '16px', fontWeight: '600', margin: '0 0 14px 0' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 600, margin: '0 0 12px 0', color: 'var(--text-main)' }}>
               Quantity Reconciliation
             </h3>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px', fontSize: '14px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Dispatched at Origin:</span>
-                <strong>{dispatched} units</strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Claimed Received:</span>
-                <strong>{received} units</strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Unexplained Gap:</span>
-                <strong style={{ color: deficit > 0 ? 'var(--danger)' : 'var(--success)' }}>
-                  {deficit} units
-                </strong>
-              </div>
+            <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '14px' }}>
+              Comparing dispatched vs received counts against field complaints.
             </div>
 
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px' }}>
+              <span>Dispatched: <strong style={{ color: 'var(--text-main)' }}>{dispatched}</strong></span>
+              <span>Received: <strong style={{ color: 'var(--text-main)' }}>{received}</strong></span>
+            </div>
+
+            {/* Reconciliation Bar using status colors */}
             <div
               style={{
-                height: '14px',
                 width: '100%',
-                backgroundColor: '#EAEAE6',
+                height: '14px',
+                backgroundColor: 'var(--bg-surface-raised)',
                 borderRadius: '999px',
                 overflow: 'hidden',
                 display: 'flex',
                 marginBottom: '10px',
+                border: '1px solid var(--border-subtle)',
               }}
             >
               <div
@@ -906,21 +916,27 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
               )}
             </div>
 
-            <div style={{ display: 'flex', gap: '16px', fontSize: '11px', color: 'var(--text-muted)' }}>
+            <div style={{ display: 'flex', gap: '16px', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '14px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--success)', display: 'inline-block' }} />
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--success)', display: 'inline-block' }} />
                 Received ({received})
               </div>
               {deficit > 0 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--danger)', display: 'inline-block' }} />
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--danger)', display: 'inline-block' }} />
                   Gap ({deficit})
                 </div>
               )}
             </div>
+
+            {avgReported !== null && (
+              <div style={{ backgroundColor: 'var(--bg-surface-raised)', padding: '10px 12px', borderRadius: 'var(--radius-btn)', fontSize: '12px', color: 'var(--text-muted)' }}>
+                Citizen Average Observed Count: <strong style={{ color: 'var(--text-main)' }}>{avgReported} units</strong>
+              </div>
+            )}
           </div>
 
-          <button onClick={() => setShowReportModal(true)} className="btn-primary" style={{ width: '100%', height: '42px', fontSize: '14px' }}>
+          <button onClick={() => setShowReportModal(true)} className="btn btn-primary btn-lg" style={{ width: '100%' }}>
             Submit Ground Reality Form
           </button>
         </div>
@@ -929,13 +945,16 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
       {/* Custodian Transit Status Modal */}
       {showStatusModal && (
         <div
+          role="dialog"
+          aria-modal="true"
           style={{
             position: 'fixed',
             top: 0,
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.45)',
+            backgroundColor: 'rgba(10, 9, 8, 0.8)',
+            backdropFilter: 'blur(4px)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -943,15 +962,15 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
             padding: '16px',
           }}
         >
-          <div style={{ background: '#FFF', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', padding: '24px', maxWidth: '440px', width: '100%' }}>
-            <h3 style={{ margin: '0 0 12px 0', fontSize: '18px' }}>Update Transit Status (patchEntity)</h3>
-            <form onSubmit={handleUpdateStatus} style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '14px' }}>
+          <div className="card" style={{ maxWidth: '460px', width: '100%', padding: '24px' }}>
+            <h3 style={{ margin: '0 0 12px 0', fontSize: '18px', color: 'var(--text-main)' }}>Update Transit Status (patchEntity)</h3>
+            <form onSubmit={handleUpdateStatus} style={{ display: 'flex', flexDirection: 'column', gap: '16px', fontSize: '14px' }}>
               <div>
-                <label style={{ display: 'block', fontWeight: '600', marginBottom: '4px', fontSize: '13px' }}>Status:</label>
+                <label style={{ display: 'block', fontWeight: 600, marginBottom: '6px', fontSize: '13px', color: 'var(--text-main)' }}>Status:</label>
                 <select
                   value={newStatusValue}
                   onChange={(e) => setNewStatusValue(e.target.value as CivicRecordStatus)}
-                  style={{ width: '100%', height: '40px', padding: '0 10px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}
+                  style={{ width: '100%', height: '40px' }}
                 >
                   <option value="CREATED">CREATED</option>
                   <option value="IN_TRANSIT">IN_TRANSIT</option>
@@ -963,21 +982,21 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
               </div>
 
               <div>
-                <label style={{ display: 'block', fontWeight: '600', marginBottom: '4px', fontSize: '13px' }}>Transit Notes:</label>
+                <label style={{ display: 'block', fontWeight: 600, marginBottom: '6px', fontSize: '13px', color: 'var(--text-main)' }}>Transit Notes:</label>
                 <textarea
                   rows={2}
                   value={statusNotes}
                   onChange={(e) => setStatusNotes(e.target.value)}
                   placeholder="Truck license, checkpoint notes..."
-                  style={{ width: '100%', padding: '8px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}
+                  style={{ width: '100%', resize: 'vertical' }}
                 />
               </div>
 
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '8px' }}>
-                <button type="button" onClick={() => setShowStatusModal(false)} className="btn-secondary">
+                <button type="button" onClick={() => setShowStatusModal(false)} className="btn btn-secondary btn-md">
                   Cancel
                 </button>
-                <button type="submit" disabled={actionLoading} className="btn-primary">
+                <button type="submit" disabled={actionLoading} className="btn btn-primary btn-md">
                   {actionLoading ? 'Saving on Chain...' : 'Save Update'}
                 </button>
               </div>
@@ -989,13 +1008,16 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
       {/* Receiver Confirmation Modal (Item 4) */}
       {showReceiverConfirmModal && (
         <div
+          role="dialog"
+          aria-modal="true"
           style={{
             position: 'fixed',
             top: 0,
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.45)',
+            backgroundColor: 'rgba(10, 9, 8, 0.8)',
+            backdropFilter: 'blur(4px)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -1003,14 +1025,14 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
             padding: '16px',
           }}
         >
-          <div style={{ background: '#FFF', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', padding: '24px', maxWidth: '440px', width: '100%' }}>
-            <h3 style={{ margin: '0 0 8px 0', fontSize: '18px' }}>Receiver Explicit Confirmation</h3>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '0 0 14px 0' }}>
+          <div className="card" style={{ maxWidth: '460px', width: '100%', padding: '24px' }}>
+            <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', color: 'var(--text-main)' }}>Receiver Explicit Confirmation</h3>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '0 0 16px 0' }}>
               Final receiver confirms the exact units received and updates delivery condition.
             </p>
-            <form onSubmit={handleUpdateStatus} style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '14px' }}>
+            <form onSubmit={handleUpdateStatus} style={{ display: 'flex', flexDirection: 'column', gap: '16px', fontSize: '14px' }}>
               <div>
-                <label style={{ display: 'block', fontWeight: '600', marginBottom: '4px', fontSize: '13px' }}>
+                <label style={{ display: 'block', fontWeight: 600, marginBottom: '6px', fontSize: '13px', color: 'var(--text-main)' }}>
                   Quantity Actually Received (Units):
                 </label>
                 <input
@@ -1020,16 +1042,16 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
                   required
                   value={newQuantityReceived}
                   onChange={(e) => setNewQuantityReceived(parseInt(e.target.value) || 0)}
-                  style={{ width: '100%', height: '40px', padding: '0 10px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}
+                  style={{ width: '100%', height: '40px' }}
                 />
               </div>
 
               <div>
-                <label style={{ display: 'block', fontWeight: '600', marginBottom: '4px', fontSize: '13px' }}>Arrival Status:</label>
+                <label style={{ display: 'block', fontWeight: 600, marginBottom: '6px', fontSize: '13px', color: 'var(--text-main)' }}>Arrival Status:</label>
                 <select
                   value={newStatusValue}
                   onChange={(e) => setNewStatusValue(e.target.value as CivicRecordStatus)}
-                  style={{ width: '100%', height: '40px', padding: '0 10px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}
+                  style={{ width: '100%', height: '40px' }}
                 >
                   <option value="DELIVERED">DELIVERED (Complete)</option>
                   <option value="PARTIAL">PARTIAL (Shortage)</option>
@@ -1039,21 +1061,21 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
               </div>
 
               <div>
-                <label style={{ display: 'block', fontWeight: '600', marginBottom: '4px', fontSize: '13px' }}>Receipt Notes:</label>
+                <label style={{ display: 'block', fontWeight: 600, marginBottom: '6px', fontSize: '13px', color: 'var(--text-main)' }}>Receipt Notes:</label>
                 <textarea
                   rows={2}
                   value={statusNotes}
                   onChange={(e) => setStatusNotes(e.target.value)}
                   placeholder="Verification details at facility..."
-                  style={{ width: '100%', padding: '8px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}
+                  style={{ width: '100%', resize: 'vertical' }}
                 />
               </div>
 
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '8px' }}>
-                <button type="button" onClick={() => setShowReceiverConfirmModal(false)} className="btn-secondary">
+                <button type="button" onClick={() => setShowReceiverConfirmModal(false)} className="btn btn-secondary btn-md">
                   Cancel
                 </button>
-                <button type="submit" disabled={actionLoading} className="btn-primary">
+                <button type="submit" disabled={actionLoading} className="btn btn-primary btn-md">
                   {actionLoading ? 'Confirming on Chain...' : 'Confirm Receipt'}
                 </button>
               </div>
@@ -1065,13 +1087,16 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
       {/* Custody Handover Modal (Item 4: Irreversible warning & checksum) */}
       {showCustodyModal && (
         <div
+          role="dialog"
+          aria-modal="true"
           style={{
             position: 'fixed',
             top: 0,
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.45)',
+            backgroundColor: 'rgba(10, 9, 8, 0.8)',
+            backdropFilter: 'blur(4px)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -1079,29 +1104,30 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
             padding: '16px',
           }}
         >
-          <div style={{ background: '#FFF', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', padding: '24px', maxWidth: '440px', width: '100%' }}>
-            <h3 style={{ margin: '0 0 8px 0', fontSize: '18px' }}>Transfer Custody (changeOwnership)</h3>
+          <div className="card" style={{ maxWidth: '460px', width: '100%', padding: '24px' }}>
+            <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', color: 'var(--text-main)' }}>Transfer Custody (changeOwnership)</h3>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '0 0 14px 0' }}>
               Transfers legal on-chain write authority of this record to a new custodian.
             </p>
 
             <div
+              role="alert"
               style={{
                 border: '1px solid var(--danger-border)',
-                backgroundColor: 'var(--danger-light)',
+                backgroundColor: 'var(--danger-bg)',
                 color: 'var(--danger)',
-                padding: '10px 14px',
-                borderRadius: 'var(--radius)',
+                padding: '12px 14px',
+                borderRadius: 'var(--radius-btn)',
                 fontSize: '12px',
-                marginBottom: '14px',
+                marginBottom: '16px',
               }}
             >
               <strong>WARNING:</strong> This action is irreversible on the blockchain. Once confirmed, you will immediately lose write access to this civic record.
             </div>
 
-            <form onSubmit={handleHandoverCustody} style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '14px' }}>
+            <form onSubmit={handleHandoverCustody} style={{ display: 'flex', flexDirection: 'column', gap: '16px', fontSize: '14px' }}>
               <div>
-                <label style={{ display: 'block', fontWeight: '600', marginBottom: '4px', fontSize: '13px' }}>
+                <label style={{ display: 'block', fontWeight: 600, marginBottom: '6px', fontSize: '13px', color: 'var(--text-main)' }}>
                   New Custodian Wallet Address:
                 </label>
                 <input
@@ -1110,11 +1136,12 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
                   placeholder="0x..."
                   value={newOwnerAddress}
                   onChange={(e) => setNewOwnerAddress(e.target.value)}
-                  style={{ width: '100%', height: '40px', padding: '0 10px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', fontFamily: 'monospace' }}
+                  className="mono"
+                  style={{ width: '100%', height: '40px' }}
                 />
               </div>
 
-              <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-muted)' }}>
                 <input
                   type="checkbox"
                   required
@@ -1126,11 +1153,11 @@ export default function RecordDetailPage({ params }: { params: Promise<{ id: str
               </label>
 
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '8px' }}>
-                <button type="button" onClick={() => setShowCustodyModal(false)} className="btn-secondary">
+                <button type="button" onClick={() => setShowCustodyModal(false)} className="btn btn-secondary btn-md">
                   Cancel
                 </button>
-                <button type="submit" disabled={actionLoading || !handoverConfirmed} className="btn-danger">
-                  {actionLoading ? 'Transferring...' : 'Confirm Irreversible Transfer'}
+                <button type="submit" disabled={actionLoading || !handoverConfirmed} className="btn btn-danger btn-md">
+                  {actionLoading ? 'Transferring...' : 'Confirm Transfer'}
                 </button>
               </div>
             </form>

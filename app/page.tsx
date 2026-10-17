@@ -2,433 +2,838 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { fetchCivicRecords, fetchGroundReports, type EntityWithMetadata, RPC_URL } from '@/lib/arkiv';
-import type { CivicRecordPayload } from '@/lib/types';
+import { HeroProductMock } from '@/components/HeroProductMock';
+import { LandingInteractiveDemo } from '@/components/LandingInteractiveDemo';
+import { LandingFaq } from '@/components/LandingFaq';
+import { fetchCivicRecords, fetchGroundReports, RPC_URL, EXPLORER_URL, FAUCET_URL } from '@/lib/arkiv';
 import { detectCoverUp } from '@/lib/detect';
+import { ShieldCheck, Eye, History, ArrowRight, Truck, CheckCircle2, AlertTriangle, FileText } from 'lucide-react';
 
-export default function DashboardPage() {
-  const [records, setRecords] = useState<EntityWithMetadata<CivicRecordPayload>[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const [search, setSearch] = useState('');
-  const [filterKind, setFilterKind] = useState<string>('ALL');
-  const [filterStatus, setFilterStatus] = useState<string>('ALL');
-  const [filterConflictingOnly, setFilterConflictingOnly] = useState(false);
-  const [sortBy, setSortBy] = useState<'DATE' | 'REPORTS' | 'SEVERITY'>('DATE');
-
+export default function LandingPage() {
   const [liveBlock, setLiveBlock] = useState<bigint | null>(null);
   const [stats, setStats] = useState({
-    totalRecords: 0,
-    totalReports: 0,
-    coverUpsDetected: 0,
+    recordsCount: 0,
+    reportsCount: 0,
+    flaggedCount: 0,
   });
+  const [statsLoading, setStatsLoading] = useState(true);
 
-  const [recordMeta, setRecordMeta] = useState<
-    Record<string, { reportCount: number; maxSeverity: number; isCoverUp: boolean }>
-  >({});
-
-  const loadData = async () => {
-    setLoading(true);
-    setErrorMessage(null);
-    try {
+  useEffect(() => {
+    async function loadChainStats() {
       try {
+        setStatsLoading(true);
+        // Query live block number
         const blkRes = await fetch(RPC_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ jsonrpc: '2.0', method: 'eth_blockNumber', params: [], id: 1 }),
         });
         const blkData = await blkRes.json();
-        if (blkData.result) setLiveBlock(BigInt(blkData.result));
-      } catch (e) {
-        console.warn('Block query error:', e);
-      }
-
-      const fetched = await fetchCivicRecords();
-      setRecords(fetched);
-
-      let totalReps = 0;
-      let coverUpCount = 0;
-      const metaMap: Record<string, { reportCount: number; maxSeverity: number; isCoverUp: boolean }> = {};
-
-      for (const r of fetched) {
-        // Query reports by canonical entityKey (Item 1)
-        const reps = await fetchGroundReports(r.key);
-        totalReps += reps.length;
-        const maxSev = reps.reduce((max, rep) => Math.max(max, rep.payload.severity || 0), 0);
-
-        const detection = detectCoverUp({
-          currentRecord: r.payload,
-          revisions: [],
-          reports: reps.map((rp) => ({
-            key: rp.key,
-            blockNumber: rp.blockNumber,
-            txHash: rp.txHash,
-            creator: rp.creator,
-            payload: rp.payload,
-          })),
-          custodianWallets: [r.owner],
-        });
-
-        if (detection.isCoverUp || detection.hasTampering) {
-          coverUpCount++;
+        if (blkData.result) {
+          setLiveBlock(BigInt(blkData.result));
         }
 
-        metaMap[r.key] = {
-          reportCount: reps.length,
-          maxSeverity: maxSev,
-          isCoverUp: detection.isCoverUp || detection.hasTampering,
-        };
+        const records = await fetchCivicRecords();
+        let totalReps = 0;
+        let flagged = 0;
+
+        for (const r of records) {
+          const reps = await fetchGroundReports(r.key);
+          totalReps += reps.length;
+          const detection = detectCoverUp({
+            currentRecord: r.payload,
+            manifest: null,
+            reports: reps.map((rp) => ({
+              key: rp.key,
+              blockNumber: rp.createdAt,
+              txHash: (rp as any).txHash || '',
+              creator: rp.creator || '0x0',
+              payload: rp.payload,
+            })),
+            revisions: [],
+          });
+          if (detection.isCoverUp) flagged++;
+        }
+
+        setStats({
+          recordsCount: records.length,
+          reportsCount: totalReps,
+          flaggedCount: flagged,
+        });
+      } catch (err) {
+        console.warn('Stats fetch issue:', err);
+      } finally {
+        setStatsLoading(false);
       }
-
-      setRecordMeta(metaMap);
-      setStats({
-        totalRecords: fetched.length,
-        totalReports: totalReps,
-        coverUpsDetected: coverUpCount,
-      });
-    } catch (err: any) {
-      console.error('Failed to load dashboard records:', err);
-      setErrorMessage(err?.message || 'Unable to load records from Tiramisu chain.');
-    } finally {
-      setLoading(false);
     }
-  };
 
-  useEffect(() => {
-    loadData();
+    loadChainStats();
   }, []);
 
-  const filtered = records
-    .filter((r) => {
-      const matchesSearch =
-        r.payload.title.toLowerCase().includes(search.toLowerCase()) ||
-        r.payload.reference_code.toLowerCase().includes(search.toLowerCase()) ||
-        r.key.toLowerCase().includes(search.toLowerCase()) ||
-        r.payload.district.toLowerCase().includes(search.toLowerCase());
-
-      const matchesKind = filterKind === 'ALL' || r.payload.kind === filterKind;
-      const matchesStatus = filterStatus === 'ALL' || r.payload.status === filterStatus;
-
-      const meta = recordMeta[r.key];
-      const matchesConflict = !filterConflictingOnly || (meta && meta.isCoverUp);
-
-      return matchesSearch && matchesKind && matchesStatus && matchesConflict;
-    })
-    .sort((a, b) => {
-      const metaA = recordMeta[a.key] || { reportCount: 0, maxSeverity: 0 };
-      const metaB = recordMeta[b.key] || { reportCount: 0, maxSeverity: 0 };
-
-      if (sortBy === 'REPORTS') return metaB.reportCount - metaA.reportCount;
-      if (sortBy === 'SEVERITY') return metaB.maxSeverity - metaA.maxSeverity;
-      return b.createdAt > a.createdAt ? 1 : -1;
-    });
-
-  const getStatusBadgeClass = (status: string) => {
-    switch (status) {
-      case 'DELIVERED':
-      case 'ALL_GOOD_DELIVERED':
-        return 'badge-green';
-      case 'DAMAGED':
-        return 'badge-red';
-      case 'IN_TRANSIT':
-        return 'badge-blue';
-      case 'PARTIAL':
-        return 'badge-amber';
-      default:
-        return 'badge-default';
-    }
-  };
-
   return (
-    <div>
-      <div style={{ marginBottom: '24px' }}>
-        <h1 style={{ fontSize: '28px', fontWeight: '600', margin: '0 0 6px 0', letterSpacing: '-0.02em' }}>
-          Civic Audit Dashboard
-        </h1>
-        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '15px' }}>
-          Public tamper-evident verification for government civic projects and supply batches.
-        </p>
-      </div>
+    <div style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-main)', minHeight: '100vh' }}>
+      {/* ============================================================ */}
+      {/* SECTION C: HERO                                              */}
+      {/* ============================================================ */}
+      <section className="section-pad" style={{ paddingTop: '80px', paddingBottom: '90px' }}>
+        <div className="container">
+          <div style={{ textAlign: 'center', maxWidth: '820px', margin: '0 auto 52px' }}>
+            <div className="eyebrow">
+              RIGHT BATCH. RIGHT CLINIC. EVERY TIME.
+            </div>
 
-      {errorMessage && (
-        <div
-          style={{
-            backgroundColor: 'var(--danger-light)',
-            border: '1px solid var(--danger-border)',
-            color: 'var(--danger)',
-            padding: '14px 16px',
-            borderRadius: 'var(--radius)',
-            marginBottom: '20px',
-            fontSize: '14px',
-          }}
-        >
-          <strong>Chain Connection Error:</strong> {errorMessage}
-          <div style={{ marginTop: '8px' }}>
-            <button onClick={loadData} className="btn-secondary" style={{ height: '30px', fontSize: '12px' }}>
-              Retry RPC Query
-            </button>
+            <h1 className="hero-title">
+              Records can be edited.<br />Reports cannot be erased.
+            </h1>
+
+            <p className="body-lead" style={{ margin: '0 auto 28px', maxWidth: '640px' }}>
+              Krix is a tamper-evident audit layer for public supply batches and civic works. Official custodians update delivery logs on-chain, while citizens and field inspectors file uncensorable, permanent ground reports.
+            </p>
+
+            {/* Hindi line bonus */}
+            <div style={{ fontSize: '14px', color: 'var(--text-faint)', fontStyle: 'italic', marginBottom: '32px' }}>
+              &ldquo;आपूर्ति में देरी हो सकती है, लेकिन सच को मिटाया नहीं जा सकता।&rdquo;
+            </div>
+
+            <div style={{ display: 'flex', gap: '14px', justifyContent: 'center', flexWrap: 'wrap' }}>
+              <Link href="/records" className="btn btn-primary btn-lg">
+                Explore records &rarr;
+              </Link>
+              <Link href="/how-it-works" className="btn btn-secondary btn-lg">
+                See how it works
+              </Link>
+            </div>
           </div>
+
+          {/* Hero Visual: Built-in HTML/CSS product mock */}
+          <HeroProductMock />
         </div>
-      )}
+      </section>
 
-      {/* Row of 4 Stat Cards */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-          gap: '16px',
-          marginBottom: '24px',
-        }}
-      >
-        <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', padding: '16px' }}>
-          <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            Official Records
-          </div>
-          <div style={{ fontSize: '26px', fontWeight: '700', marginTop: '4px' }}>{stats.totalRecords}</div>
-        </div>
-
-        <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', padding: '16px' }}>
-          <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            Immutable Reports
-          </div>
-          <div style={{ fontSize: '26px', fontWeight: '700', marginTop: '4px' }}>{stats.totalReports}</div>
-        </div>
-
-        <div
-          style={{
-            background: stats.coverUpsDetected > 0 ? 'var(--danger-light)' : 'var(--bg-surface)',
-            border: `1px solid ${stats.coverUpsDetected > 0 ? 'var(--danger-border)' : 'var(--border-subtle)'}`,
-            borderRadius: 'var(--radius)',
-            padding: '16px',
-          }}
-        >
-          <div
-            style={{
-              fontSize: '12px',
-              fontWeight: '600',
-              color: stats.coverUpsDetected > 0 ? 'var(--danger)' : 'var(--text-muted)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.04em',
-            }}
-          >
-            Cover-Ups Flagged
-          </div>
-          <div
-            style={{
-              fontSize: '26px',
-              fontWeight: '700',
-              marginTop: '4px',
-              color: stats.coverUpsDetected > 0 ? 'var(--danger)' : 'var(--text-main)',
-            }}
-          >
-            {stats.coverUpsDetected}
-          </div>
-        </div>
-
-        <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', padding: '16px' }}>
-          <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            Live Chain Block
-          </div>
-          <div style={{ fontSize: '26px', fontWeight: '700', marginTop: '4px', fontFamily: 'monospace' }}>
-            {liveBlock !== null ? `#${liveBlock.toString()}` : 'Connecting...'}
-          </div>
-        </div>
-      </div>
-
-      {/* Filter Bar */}
-      <div
-        style={{
-          background: 'var(--bg-surface)',
-          border: '1px solid var(--border-subtle)',
-          borderRadius: 'var(--radius)',
-          padding: '14px 16px',
-          marginBottom: '20px',
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: '12px',
-          alignItems: 'center',
-        }}
-      >
-        <input
-          type="text"
-          placeholder="Search by ref code, title, district, entity key..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{
-            height: '40px',
-            padding: '0 12px',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 'var(--radius)',
-            minWidth: '260px',
-            flex: '1',
-          }}
-        />
-
-        <select
-          value={filterKind}
-          onChange={(e) => setFilterKind(e.target.value)}
-          style={{ height: '40px', padding: '0 10px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: '#FFF' }}
-        >
-          <option value="ALL">All Categories</option>
-          <option value="MEDICINE_BATCH">Medicine Batch</option>
-          <option value="RELIEF_KIT">Relief Kit</option>
-          <option value="ROAD_WORK">Road Work</option>
-          <option value="WATER_WORK">Water Work</option>
-        </select>
-
-        <select
-          value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value)}
-          style={{ height: '40px', padding: '0 10px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: '#FFF' }}
-        >
-          <option value="ALL">All Statuses</option>
-          <option value="CREATED">CREATED</option>
-          <option value="IN_TRANSIT">IN_TRANSIT</option>
-          <option value="DELIVERED">DELIVERED</option>
-          <option value="DAMAGED">DAMAGED</option>
-          <option value="PARTIAL">PARTIAL</option>
-          <option value="ALL_GOOD_DELIVERED">ALL_GOOD_DELIVERED</option>
-        </select>
-
-        <select
-          value={sortBy}
-          onChange={(e) => setSortBy(e.target.value as any)}
-          style={{ height: '40px', padding: '0 10px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: '#FFF' }}
-        >
-          <option value="DATE">Sort: Newest</option>
-          <option value="REPORTS">Sort: Most Reports</option>
-          <option value="SEVERITY">Sort: Severity</option>
-        </select>
-
-        <label style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', userSelect: 'none' }}>
-          <input
-            type="checkbox"
-            checked={filterConflictingOnly}
-            onChange={(e) => setFilterConflictingOnly(e.target.checked)}
-          />
-          Has Conflicts
-        </label>
-
-        <button onClick={loadData} className="btn-secondary" style={{ height: '40px' }}>
-          Refresh
-        </button>
-      </div>
-
-      {/* Loading Skeleton */}
-      {loading ? (
-        <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', padding: '24px' }}>
-          <div style={{ height: '24px', background: '#EAEAE6', borderRadius: '4px', marginBottom: '14px', width: '30%' }} />
-          <div style={{ height: '40px', background: '#F2F2EE', borderRadius: '4px', marginBottom: '10px' }} />
-          <div style={{ height: '40px', background: '#F2F2EE', borderRadius: '4px', marginBottom: '10px' }} />
-          <div style={{ height: '40px', background: '#F2F2EE', borderRadius: '4px' }} />
-        </div>
-      ) : filtered.length === 0 ? (
-        <div
-          style={{
-            background: 'var(--bg-surface)',
-            border: '1px dashed var(--border-strong)',
-            borderRadius: 'var(--radius)',
-            padding: '48px 24px',
-            textAlign: 'center',
-          }}
-        >
-          <div style={{ fontSize: '16px', fontWeight: '600', marginBottom: '6px' }}>No records found</div>
-          <p style={{ color: 'var(--text-muted)', fontSize: '14px', margin: '0 0 16px 0' }}>
-            No records matched your search.
+      {/* ============================================================ */}
+      {/* SECTION D: AT A GLANCE                                       */}
+      {/* ============================================================ */}
+      <section id="product" className="section-pad" style={{ borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-surface)' }}>
+        <div className="container" style={{ maxWidth: '880px', textAlign: 'center' }}>
+          <div className="eyebrow">AT A GLANCE</div>
+          <h2 className="section-title">
+            With Krix, the paper trail can&apos;t be rewritten.
+          </h2>
+          <p className="body-lead" style={{ margin: '0 auto' }}>
+            Traditional government portals rely on centralized SQL databases where an administrator or official can silently edit delivery numbers, delete complaints, or overturn failed audits. Krix separates the official transit log from the ground reality reporting layer. Every handover requires cryptographic custody transfer, every citizen complaint is permanent, and our time-travel engine automatically surfaces cover-ups by comparing history against real-world reports.
           </p>
-          <Link href="/new" className="btn-primary">
-            + Register New Record
-          </Link>
         </div>
-      ) : (
-        /* Records Table linking to entityKey (Item 1) */
-        <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px', textAlign: 'left' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-subtle)', background: '#FAFAFA' }}>
-                <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                  Reference Code
-                </th>
-                <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                  Title
-                </th>
-                <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                  Category
-                </th>
-                <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                  Status
-                </th>
-                <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                  Custodian
-                </th>
-                <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                  Reports
-                </th>
-                <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: '600', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                  Audit Flag
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((r) => {
-                const meta = recordMeta[r.key] || { reportCount: 0, isCoverUp: false };
-                return (
-                  <tr
-                    key={r.key}
-                    style={{
-                      borderBottom: '1px solid var(--border-subtle)',
-                      cursor: 'pointer',
-                      transition: 'background-color 0.1s ease',
-                    }}
-                    onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '#FBFBFA')}
-                    onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = 'transparent')}
-                  >
-                    <td style={{ padding: '14px 16px', fontFamily: 'monospace' }}>
-                      <Link href={`/records/${r.key}`} style={{ fontWeight: '600', color: 'var(--primary)' }}>
-                        {r.payload.reference_code || r.key.slice(0, 16) + '...'}
-                      </Link>
-                    </td>
-                    <td style={{ padding: '14px 16px' }}>
-                      <Link href={`/records/${r.key}`} style={{ color: 'var(--text-main)', textDecoration: 'none' }}>
-                        {r.payload.title}
-                      </Link>
-                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                        {r.payload.district} ({r.payload.ward_id})
-                      </div>
-                    </td>
-                    <td style={{ padding: '14px 16px', color: 'var(--text-muted)' }}>{r.payload.kind}</td>
-                    <td style={{ padding: '14px 16px' }}>
-                      <span className={`badge ${getStatusBadgeClass(r.payload.status)}`}>
-                        {r.payload.status}
-                      </span>
-                    </td>
-                    <td style={{ padding: '14px 16px', fontFamily: 'monospace', fontSize: '13px' }}>
-                      {r.owner ? `${r.owner.slice(0, 6)}...${r.owner.slice(-4)}` : 'N/A'}
-                    </td>
-                    <td style={{ padding: '14px 16px' }}>
-                      {meta.reportCount > 0 ? (
-                        <strong>{meta.reportCount} reports</strong>
-                      ) : (
-                        <span style={{ color: 'var(--text-muted)' }}>0</span>
-                      )}
-                    </td>
-                    <td style={{ padding: '14px 16px' }}>
-                      {meta.isCoverUp ? (
-                        <span className="badge badge-red" style={{ fontWeight: '700' }}>
-                          FLAGGED
-                        </span>
-                      ) : (
-                        <span className="badge badge-green">Clean</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      </section>
+
+      {/* ============================================================ */}
+      {/* SECTION E: THE BOTTOM LINE                                   */}
+      {/* ============================================================ */}
+      <section className="section-pad" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+        <div className="container">
+          <div style={{ textAlign: 'center', maxWidth: '700px', margin: '0 auto 60px' }}>
+            <div className="eyebrow">THE BOTTOM LINE</div>
+            <h2 className="section-title">
+              Three mechanisms for absolute civic transparency.
+            </h2>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+              gap: '24px',
+            }}
+          >
+            <div className="card">
+              <div style={{ color: 'var(--accent)', marginBottom: '16px' }}>
+                <ShieldCheck size={28} />
+              </div>
+              <h3 className="card-title">Track every handover</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '15px', lineHeight: 1.6, marginBottom: '16px' }}>
+                Batches are created with a sealed genesis manifest. Ownership passes from state warehouse to distributor to clinic via on-chain custody transfers. Only the current custodian can update status.
+              </p>
+              <Link href="/records" style={{ fontSize: '14px', color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                View custody chain &rarr;
+              </Link>
+            </div>
+
+            <div className="card">
+              <div style={{ color: 'var(--accent)', marginBottom: '16px' }}>
+                <Eye size={28} />
+              </div>
+              <h3 className="card-title">Let anyone report the truth</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '15px', lineHeight: 1.6, marginBottom: '16px' }}>
+                Field inspectors, doctors, and residents submit photo proof and severity ratings. Every submission is committed with permanent readonly flags. No minister or database admin can remove it.
+              </p>
+              <Link href="/how-it-works" style={{ fontSize: '14px', color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                Read about immutability &rarr;
+              </Link>
+            </div>
+
+            <div className="card">
+              <div style={{ color: 'var(--accent)', marginBottom: '16px' }}>
+                <History size={28} />
+              </div>
+              <h3 className="card-title">Catch the cover-up</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '15px', lineHeight: 1.6, marginBottom: '16px' }}>
+                When officials attempt to flip a failing batch to &ldquo;All Good Delivered&rdquo; or inflate quantities, the time-travel engine scrubs historical blocks via <code>atBlock</code> queries to flag discrepancies.
+              </p>
+              <Link href="#demo" style={{ fontSize: '14px', color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                Try interactive diff &rarr;
+              </Link>
+            </div>
+          </div>
         </div>
-      )}
+      </section>
+
+      {/* ============================================================ */}
+      {/* SECTION F: WHO IT'S FOR                                      */}
+      {/* ============================================================ */}
+      <section id="who-its-for" className="section-pad" style={{ borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-surface)' }}>
+        <div className="container">
+          <div style={{ textAlign: 'center', maxWidth: '700px', margin: '0 auto 60px' }}>
+            <div className="eyebrow">WHO IT&apos;S FOR</div>
+            <h2 className="section-title">
+              Designed for everyone in the delivery chain.
+            </h2>
+            <p style={{ color: 'var(--text-muted)' }}>
+              Practical accountability without requiring participants to be blockchain experts.
+            </p>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+              gap: '20px',
+            }}
+          >
+            <div className="card-raised">
+              <div style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--accent)', marginBottom: '8px' }}>
+                Origin &amp; Logistics
+              </div>
+              <h3 className="card-title">State Warehouses &amp; Distributors</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px', margin: 0 }}>
+                Register new supply batches, seal immutable dispatch manifests, and transfer legal custody cryptographically as trucks leave storage.
+              </p>
+            </div>
+
+            <div className="card-raised">
+              <div style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--accent)', marginBottom: '8px' }}>
+                Receiving Centers
+              </div>
+              <h3 className="card-title">Rural Clinics &amp; PHCs</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px', margin: 0 }}>
+                Confirm exact received stock counts, report rain damage or broken seals upon arrival, and protect clinical staff from false delivery claims.
+              </p>
+            </div>
+
+            <div className="card-raised">
+              <div style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--accent)', marginBottom: '8px' }}>
+                Field Quality Audits
+              </div>
+              <h3 className="card-title">Field Inspectors &amp; Doctors</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px', margin: 0 }}>
+                File tamper-proof quality inspections and laboratory test findings with photo evidence that cannot be silenced by higher officials.
+              </p>
+            </div>
+
+            <div className="card-raised">
+              <div style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--accent)', marginBottom: '8px' }}>
+                Ward Beneficiaries
+              </div>
+              <h3 className="card-title">Citizens &amp; Patients</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px', margin: 0 }}>
+                Verify whether allocated medicines actually reached local dispensaries, report shortages, and extend the lifetime of critical complaints.
+              </p>
+            </div>
+
+            <div className="card-raised" style={{ gridColumn: '1 / -1' }}>
+              <div style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--accent)', marginBottom: '8px' }}>
+                Public Oversight
+              </div>
+              <h3 className="card-title">Journalists &amp; Civic Watchdogs</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px', margin: 0 }}>
+                Scrub historical blocks using time-travel queries, verify cryptographic proof hashes, and export unalterable forensic evidence packages.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ============================================================ */}
+      {/* SECTION G: TRUTH IS A CONVERSATION                           */}
+      {/* ============================================================ */}
+      <section className="section-pad" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+        <div className="container">
+          <div style={{ textAlign: 'center', maxWidth: '700px', margin: '0 auto 80px' }}>
+            <div className="eyebrow">HOW THE PIECES FIT TOGETHER</div>
+            <h2 className="section-title">
+              Three pillars of permanent accountability.
+            </h2>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '96px' }}>
+            {/* Row 1 */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+                gap: '48px',
+                alignItems: 'center',
+              }}
+            >
+              <div>
+                <div className="eyebrow">PILLAR ONE</div>
+                <h3 className="section-title" style={{ fontSize: '32px' }}>
+                  Custody handover with changeOwnership
+                </h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '16px', lineHeight: 1.6, marginBottom: '20px' }}>
+                  A batch cannot be updated by whoever happens to have server access. At every hop from State Warehouse to Transport Fleet to Local Dispensary, the sending custodian transfers ownership on-chain. The moment custody transfers, the sender loses write access forever.
+                </p>
+                <div style={{ color: 'var(--text-faint)', fontSize: '13px' }} className="mono">
+                  Primitive: Arkiv changeOwnership() &middot; Event: OwnershipTransferred
+                </div>
+              </div>
+
+              {/* Mock: Custody chain stepper */}
+              <div className="card" style={{ padding: '24px' }}>
+                <div style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: '16px' }}>
+                  On-Chain Custody Stepper
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                    <div style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: 'var(--success-bg)', color: 'var(--success)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 600 }}>
+                      1
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '14px', fontWeight: 600 }}>State Warehouse (Vijayawada)</div>
+                      <div className="mono" style={{ fontSize: '12px', color: 'var(--text-faint)' }}>0xc360...16cf9 &middot; Block #410100</div>
+                    </div>
+                  </div>
+
+                  <div style={{ borderLeft: '2px dashed var(--border-strong)', height: '16px', marginLeft: '13px' }} />
+
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                    <div style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: 'var(--success-bg)', color: 'var(--success)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 600 }}>
+                      2
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '14px', fontWeight: 600 }}>District Logistics Truck 1024</div>
+                      <div className="mono" style={{ fontSize: '12px', color: 'var(--text-faint)' }}>0x2b3c...012b &middot; Block #410140</div>
+                    </div>
+                  </div>
+
+                  <div style={{ borderLeft: '2px dashed var(--border-strong)', height: '16px', marginLeft: '13px' }} />
+
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                    <div style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: 'var(--accent-soft)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 600 }}>
+                      3
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '14px', fontWeight: 600 }}>PHC Mangalagiri (Current Custodian)</div>
+                      <div className="mono" style={{ fontSize: '12px', color: 'var(--text-faint)' }}>0x3c4d...23c4 &middot; Block #410180</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Row 2 */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+                gap: '48px',
+                alignItems: 'center',
+              }}
+            >
+              {/* Mock: Report Card */}
+              <div className="card" style={{ padding: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <span className="badge badge-danger">DEFECT REPORT &middot; SEV 9/10</span>
+                  <span className="badge badge-default mono">readonly: true</span>
+                </div>
+                <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: '6px' }}>
+                  Medical Officer &middot; PHC Mangalagiri OPD
+                </div>
+                <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6, margin: '0 0 16px 0' }}>
+                  &ldquo;Cartons soaked in water during rain transit. Broken tamper seals on 200 vials. Immediate replacement needed.&rdquo;
+                </p>
+                <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: 'var(--text-faint)' }}>
+                  <span>Lifetime: 28 days remaining</span>
+                  <button className="btn btn-secondary btn-md" style={{ height: '28px', fontSize: '11px' }}>
+                    Extend Life (+30d)
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <div className="eyebrow">PILLAR TWO</div>
+                <h3 className="section-title" style={{ fontSize: '32px' }}>
+                  Uncensorable ground reality form
+                </h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '16px', lineHeight: 1.6, marginBottom: '20px' }}>
+                  Anyone on the ground can register an observation. Reports are written with the cryptographic <code>readonly: true</code> flag. No minister, politician, or database administrator can modify or delete a filed complaint. With <code>permissionlessExtension: true</code>, any resident can extend a complaint&apos;s storage life.
+                </p>
+                <div style={{ color: 'var(--text-faint)', fontSize: '13px' }} className="mono">
+                  Primitive: Arkiv readonly &middot; Photo: IPFS with stripped EXIF GPS
+                </div>
+              </div>
+            </div>
+
+            {/* Row 3 */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+                gap: '48px',
+                alignItems: 'center',
+              }}
+            >
+              <div>
+                <div className="eyebrow">PILLAR THREE</div>
+                <h3 className="section-title" style={{ fontSize: '32px' }}>
+                  Time-travel diff queries via atBlock
+                </h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '16px', lineHeight: 1.6, marginBottom: '20px' }}>
+                  When an official alters a damaged batch record to &ldquo;Delivered All Good&rdquo;, they leave an immutable fingerprint. Krix uses Arkiv&apos;s <code>atBlock</code> primitive to query past states and generates red/green diffs that prove the record was altered after complaints were filed.
+                </p>
+                <div style={{ color: 'var(--text-faint)', fontSize: '13px' }} className="mono">
+                  Query: publicClient.select().atBlock(height)
+                </div>
+              </div>
+
+              {/* Mock: Red/Green diff */}
+              <div className="card" style={{ padding: '24px' }}>
+                <div style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: '12px' }}>
+                  Forensic Red / Green Diff (Block #410180 vs Now)
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-faint)', marginBottom: '4px' }}>FIELD: STATUS</div>
+                    <div className="diff-removed" style={{ marginBottom: '4px' }}>
+                      - status: &quot;DAMAGED&quot; (at block #410180)
+                    </div>
+                    <div className="diff-added">
+                      + status: &quot;ALL_GOOD_DELIVERED&quot; (at block #410290)
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-faint)', marginBottom: '4px' }}>FIELD: QUANTITY_RECEIVED</div>
+                    <div className="diff-removed" style={{ marginBottom: '4px' }}>
+                      - quantity_received: 300
+                    </div>
+                    <div className="diff-added">
+                      + quantity_received: 500
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ============================================================ */}
+      {/* SECTION H: SUPPLY FLOW, VERIFIED                             */}
+      {/* ============================================================ */}
+      <section className="section-pad" style={{ borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-surface)' }}>
+        <div className="container" style={{ maxWidth: '780px' }}>
+          <div style={{ textAlign: 'center', marginBottom: '64px' }}>
+            <div className="eyebrow">SUPPLY FLOW, VERIFIED</div>
+            <h2 className="section-title">
+              Five verifiable checkpoints from source to citizen.
+            </h2>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '32px', position: 'relative' }}>
+            <div style={{ position: 'absolute', left: '20px', top: '16px', bottom: '16px', width: '2px', backgroundColor: 'var(--border-strong)', zIndex: 0 }} />
+
+            {[
+              {
+                step: '01',
+                title: 'State Warehouse creates the batch',
+                desc: 'A mutable civic_record is registered alongside an immutable dispatch_manifest containing the original dispatch quantity, kind, and destination.',
+                badge: 'createEntity',
+              },
+              {
+                step: '02',
+                title: 'Handover to transport distributor',
+                desc: 'State warehouse signs changeOwnership transaction to the transport operator wallet. The warehouse can no longer edit the batch.',
+                badge: 'changeOwnership',
+              },
+              {
+                step: '03',
+                title: 'Receipt at rural clinic',
+                desc: 'Local receiving officer inspects incoming cartons and logs physical delivery numbers and transit condition.',
+                badge: 'patchEntity',
+              },
+              {
+                step: '04',
+                title: 'Independent ground reports filed',
+                desc: 'Doctors, field quality auditors, and citizens file permanent reports with photos on IPFS and readonly flags.',
+                badge: 'readonly: true',
+              },
+              {
+                step: '05',
+                title: 'Cover-up check flags discrepancies',
+                desc: 'The pure detection engine queries historical block states via atBlock and alerts watchdogs if status was flipped contrary to field evidence.',
+                badge: 'atBlock diff',
+              },
+            ].map((item, idx) => (
+              <div key={idx} style={{ display: 'flex', gap: '24px', alignItems: 'flex-start', position: 'relative', zIndex: 1 }}>
+                <div
+                  style={{
+                    width: '42px',
+                    height: '42px',
+                    borderRadius: '50%',
+                    backgroundColor: 'var(--bg-surface-raised)',
+                    border: '2px solid var(--accent)',
+                    color: 'var(--text-main)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 600,
+                    fontSize: '14px',
+                    flexShrink: 0,
+                  }}
+                  className="mono"
+                >
+                  {item.step}
+                </div>
+                <div className="card" style={{ flex: 1, padding: '20px 24px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <h3 style={{ fontSize: '18px', fontWeight: 600, margin: 0 }}>{item.title}</h3>
+                    <span className="badge badge-accent mono" style={{ fontSize: '11px' }}>
+                      {item.badge}
+                    </span>
+                  </div>
+                  <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '14px', lineHeight: 1.6 }}>
+                    {item.desc}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ============================================================ */}
+      {/* SECTION I: INTERACTIVE LIVE DEMO                             */}
+      {/* ============================================================ */}
+      <section id="demo" className="section-pad" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+        <div className="container">
+          <div style={{ textAlign: 'center', maxWidth: '700px', margin: '0 auto 48px' }}>
+            <div className="eyebrow">INTERACTIVE DEMO</div>
+            <h2 className="section-title">
+              Scrub history in real-time.
+            </h2>
+            <p style={{ color: 'var(--text-muted)' }}>
+              Drag the block slider below to query past states and observe how Krix uncovers alterations.
+            </p>
+          </div>
+
+          <LandingInteractiveDemo />
+        </div>
+      </section>
+
+      {/* ============================================================ */}
+      {/* SECTION J: BUILT ON                                          */}
+      {/* ============================================================ */}
+      <section className="section-pad" style={{ borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-surface)' }}>
+        <div className="container">
+          <div style={{ textAlign: 'center', maxWidth: '600px', margin: '0 auto 48px' }}>
+            <div className="eyebrow">UNDER THE HOOD</div>
+            <h2 className="section-title">
+              Open infrastructure, verifiable primitives.
+            </h2>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+              gap: '24px',
+            }}
+          >
+            <div className="card">
+              <h3 className="card-title">Arkiv Network</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px', lineHeight: 1.6, margin: 0 }}>
+                High-performance database rollup enabling structured entity querying, rent-based lifetime extension, and cryptographic readonly guarantees.
+              </p>
+            </div>
+
+            <div className="card">
+              <h3 className="card-title">Tiramisu Testnet</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px', lineHeight: 1.6, margin: 0 }}>
+                Dedicated Ethereum Layer 3 execution network (Chain ID: 7738577) with sub-second block finality and gas settled in testnet $GLM.
+              </p>
+            </div>
+
+            <div className="card">
+              <h3 className="card-title">IPFS Storage</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px', lineHeight: 1.6, margin: 0 }}>
+                Decentralized media storage for ground reality photos. Client-side EXIF GPS coordinates are stripped before upload to protect whistleblower privacy.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ============================================================ */}
+      {/* SECTION K: LIVE FROM THE CHAIN                               */}
+      {/* ============================================================ */}
+      <section className="section-pad" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+        <div className="container">
+          <div style={{ textAlign: 'center', maxWidth: '600px', margin: '0 auto 48px' }}>
+            <div className="eyebrow">LIVE FROM THE CHAIN</div>
+            <h2 className="section-title">
+              Real-time on-chain statistics.
+            </h2>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+              gap: '16px',
+            }}
+          >
+            <div className="card" style={{ textAlign: 'center', padding: '32px 20px' }}>
+              <div style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: '8px' }}>
+                Batches Tracked
+              </div>
+              <div style={{ fontSize: '36px', fontWeight: 600, color: 'var(--text-main)' }}>
+                {statsLoading ? '—' : stats.recordsCount}
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Registered on Tiramisu L3
+              </div>
+            </div>
+
+            <div className="card" style={{ textAlign: 'center', padding: '32px 20px' }}>
+              <div style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: '8px' }}>
+                Ground Reports
+              </div>
+              <div style={{ fontSize: '36px', fontWeight: 600, color: 'var(--text-main)' }}>
+                {statsLoading ? '—' : stats.reportsCount}
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Sealed with readonly: true
+              </div>
+            </div>
+
+            <div className="card" style={{ textAlign: 'center', padding: '32px 20px' }}>
+              <div style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: '8px' }}>
+                Contradictions Flagged
+              </div>
+              <div style={{ fontSize: '36px', fontWeight: 600, color: stats.flaggedCount > 0 ? 'var(--danger)' : 'var(--text-main)' }}>
+                {statsLoading ? '—' : stats.flaggedCount}
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Cover-up alterations detected
+              </div>
+            </div>
+
+            <div className="card" style={{ textAlign: 'center', padding: '32px 20px' }}>
+              <div style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: '8px' }}>
+                Live Block Height
+              </div>
+              <div className="mono" style={{ fontSize: '32px', fontWeight: 600, color: 'var(--text-main)' }}>
+                {liveBlock ? `#${liveBlock.toString()}` : '—'}
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Polled via active RPC
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ============================================================ */}
+      {/* SECTION L: ILLUSTRATIVE SCENARIOS                            */}
+      {/* ============================================================ */}
+      <section className="section-pad" style={{ borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-surface)' }}>
+        <div className="container">
+          <div style={{ textAlign: 'center', maxWidth: '700px', margin: '0 auto 48px' }}>
+            <div className="eyebrow">ILLUSTRATIVE SCENARIOS</div>
+            <h2 className="section-title">
+              How Krix resolves real-world civic disputes.
+            </h2>
+            <p style={{ color: 'var(--text-faint)', fontSize: '13px' }}>
+              Illustrative scenarios, not real customer records.
+            </p>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+              gap: '24px',
+            }}
+          >
+            <div className="card">
+              <span className="badge badge-warning" style={{ marginBottom: '12px' }}>
+                MEDICINE TRANSIT DAMAGE
+              </span>
+              <h3 className="card-title">500 Dengue Testing Kits</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px', lineHeight: 1.6, marginBottom: '14px' }}>
+                200 kits arrive with broken seals and rain damage at a rural health center. An official later flips the delivery record to &ldquo;Delivered 500 Pristine&rdquo;. Krix flags the reversal using the doctor&apos;s photos and inspector reports.
+              </p>
+              <div style={{ fontSize: '12px', color: 'var(--text-faint)' }} className="mono">
+                Outcome: Discrepancy score 92/100 &middot; Forensics exported
+              </div>
+            </div>
+
+            <div className="card">
+              <h3 className="card-title">Flood-Relief Ration Kits</h3>
+              <span className="badge badge-warning" style={{ marginBottom: '12px' }}>
+                QUANTITY SHORTAGE
+              </span>
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px', lineHeight: 1.6, marginBottom: '14px' }}>
+                1,000 emergency food packets dispatched; only 700 distributed in the flood zone. The reconciliation bar highlights the 300-packet gap between the dispatch manifest and citizen confirmations.
+              </p>
+              <div style={{ fontSize: '12px', color: 'var(--text-faint)' }} className="mono">
+                Outcome: Shortfall flagged on public dashboard
+              </div>
+            </div>
+
+            <div className="card">
+              <span className="badge badge-warning" style={{ marginBottom: '12px' }}>
+                CIVIC INFRASTRUCTURE
+              </span>
+              <h3 className="card-title">Ward 14 Road Resurfacing</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px', lineHeight: 1.6, marginBottom: '14px' }}>
+                Contractor marks road repair as 100% completed. Residents file 5 immutable reports documenting unresolved potholes. The system prevents premature payment signoff without physical audit verification.
+              </p>
+              <div style={{ fontSize: '12px', color: 'var(--text-faint)' }} className="mono">
+                Outcome: Citizen evidence preserved on-chain
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ============================================================ */}
+      {/* SECTION M: FAQ ACCORDION                                     */}
+      {/* ============================================================ */}
+      <section id="faq" className="section-pad" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+        <div className="container">
+          <div style={{ textAlign: 'center', maxWidth: '640px', margin: '0 auto 48px' }}>
+            <div className="eyebrow">COMMON QUESTIONS</div>
+            <h2 className="section-title">
+              Frequently asked questions.
+            </h2>
+          </div>
+
+          <LandingFaq />
+        </div>
+      </section>
+
+      {/* ============================================================ */}
+      {/* SECTION N: FINAL CTA BAND                                    */}
+      {/* ============================================================ */}
+      <section className="section-pad" style={{ borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-surface-raised)', textAlign: 'center' }}>
+        <div className="container" style={{ maxWidth: '640px' }}>
+          <div className="eyebrow">TRANSPARENCY FROM SOURCE TO PHC</div>
+          <h2 className="section-title">
+            Ready to explore live public records?
+          </h2>
+          <p className="body-lead" style={{ margin: '0 auto 32px' }}>
+            Browse active supply chains, review citizen reports, or submit an unalterable ground reality report.
+          </p>
+          <div style={{ display: 'flex', gap: '14px', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <Link href="/records" className="btn btn-primary btn-lg">
+              Open the records &rarr;
+            </Link>
+            <Link href="/new" className="btn btn-secondary btn-lg">
+              + Register New Batch
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* ============================================================ */}
+      {/* SECTION O: FOOTER                                            */}
+      {/* ============================================================ */}
+      <footer style={{ borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-app)', padding: '64px 0 40px' }}>
+        <div className="container">
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'space-between',
+              alignItems: 'flex-start',
+              gap: '32px',
+              marginBottom: '48px',
+            }}
+          >
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                <img src="/logo.svg" alt="Krix" width="24" height="24" />
+                <span style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-main)' }}>Krix</span>
+              </div>
+              <div style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
+                Supplies can be delayed. Truth cannot be deleted.
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '32px', fontSize: '14px', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-faint)', letterSpacing: '0.08em' }}>
+                  Platform
+                </div>
+                <Link href="/records" style={{ color: 'var(--text-muted)' }}>
+                  Records
+                </Link>
+                <Link href="/new" style={{ color: 'var(--text-muted)' }}>
+                  Create Record
+                </Link>
+                <Link href="/how-it-works" style={{ color: 'var(--text-muted)' }}>
+                  How It Works
+                </Link>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-faint)', letterSpacing: '0.08em' }}>
+                  Tiramisu Network
+                </div>
+                <a href={EXPLORER_URL} target="_blank" rel="noreferrer" style={{ color: 'var(--text-muted)' }}>
+                  Block Explorer
+                </a>
+                <a href={FAUCET_URL} target="_blank" rel="noreferrer" style={{ color: 'var(--text-muted)' }}>
+                  $GLM Faucet
+                </a>
+                <a href="https://github.com/Shivangi-Sharma06/krix" target="_blank" rel="noreferrer" style={{ color: 'var(--text-muted)' }}>
+                  GitHub
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <div
+            style={{
+              borderTop: '1px solid var(--border-subtle)',
+              paddingTop: '24px',
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: '16px',
+              fontSize: '12px',
+              color: 'var(--text-faint)',
+            }}
+          >
+            <div>
+              Testnet project, not an official government system.
+            </div>
+            <div>
+              &copy; 2026 Krix. Built on Arkiv &amp; Tiramisu testnet.
+            </div>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

@@ -1,8 +1,8 @@
-# JanAudit (Krix) — Tamper-Evident Civic Audit Layer
+# Krix — Tamper-Evident Civic Audit Layer
 
 > *Supplies can be delayed. Truth cannot be deleted.*
 
-JanAudit (Krix) is a public, tamper-evident audit layer for government civic projects and public distribution supply chains (Jan Aushadhi medicine batches, relief kits, and ward civic works).
+Krix is a public, tamper-evident audit layer for government civic projects and public distribution supply chains (medicine batches, relief kits, and ward civic works).
 
 It is built with **Next.js 15 (React 19, TypeScript)**, **Viem**, **@arkiv-network/sdk (v0.8.1)** on the **Tiramisu Testnet** (Chain ID: 7738577), and client-side privacy-preserving IPFS photo handling.
 
@@ -67,7 +67,7 @@ App runs at: **`http://localhost:3000`**
 
 | # | Item | Status | How Implemented & Verified |
 |---|---|---|---|
-| 1 | **Record Identity** | **FIXED** | Removed record ID text input from `/new`. Canonical identifier is the Arkiv entity key (`/records/[entityKey]`). URLs and reports reference canonical entity keys. Auto-generates human-readable reference codes (`JA-<KIND>-<DISTRICT>-<YEAR>-<6CHARS>`). Entity key format validated; malformed/unknown keys route cleanly to 404 page. |
+| 1 | **Record Identity** | **FIXED** | Removed record ID text input from `/new`. Canonical identifier is the Arkiv entity key (`/records/[entityKey]`). URLs and reports reference canonical entity keys. Auto-generates human-readable reference codes (`KX-<KIND>-<DISTRICT>-<YEAR>-<6CHARS>`). Entity key format validated; malformed/unknown keys route cleanly to 404 page. |
 | 2 | **Immutable Fields** | **FIXED** | Companion `dispatch_manifest` entity (`readonly: true`) created at batch creation. `patchEntity` in `lib/arkiv.ts` strictly whitelists only `status`, `quantity_received`, and `notes`. Detection engine flags changes to genesis fields as high-severity `TAMPERING`. |
 | 3 | **Demo / Live Isolation** | **FIXED** | "Test Immutability" button removed from production record UI (preserved on `/how-it-works`). Persona dropdown switcher disabled in live mode; live user role is derived directly from the connected wallet. In production (`NODE_ENV=production`), demo mode is blocked unless `NEXT_PUBLIC_ALLOW_DEMO_IN_PROD=true`. |
 | 4 | **Access Control & Custody** | **FIXED** | Custodian actions (patch, handover) verify custodian ownership against the live chain right before sending. Handover verifies checksummed address, blocks zero address and self-transfer, and requires modal confirmation that handover is irreversible. State machine forbids invalid transitions and over-deliveries. |

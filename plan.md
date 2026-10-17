@@ -1,7 +1,7 @@
-# Implementation Plan: Krix (JanAudit)
+# Implementation Plan: Krix
 
 ## 1. Summary of What Will Be Built
-Krix (JanAudit) is a tamper-evident audit web application for government civic and supply chain projects (e.g. Jan Aushadhi medicine batches, relief kits, civic works).
+Krix is a tamper-evident audit web application for government civic and supply chain projects (medicine batches, relief kits, civic works).
 The application enforces accountability across three distinct layers:
 1. **Official Record (`civic_record`)**: A living, mutable on-chain entity tracked on Arkiv / Tiramisu testnet. Custody transfers (`changeOwnership`) enforce that only the current legal custodian can update status, quantities, and notes via `patchEntity`. Every change generates verifiable on-chain revision events.
 2. **Ground Reality Reports (`ground_report`)**: An uncensorable, permanent citizen and field-inspector reporting layer. Reports are created with immutable flags (`readonly: true`, `permissionlessExtension: true`) and optional IPFS photo evidence (with EXIF GPS stripped by default and client-side CID validation). No custodian, minister, or admin can edit or delete these reports. Any community supporter can perform Lifetime Extension (`extendEntity`).

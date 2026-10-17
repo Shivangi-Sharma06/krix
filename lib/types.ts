@@ -41,7 +41,7 @@ export interface DispatchManifestPayload {
  */
 export interface CivicRecordPayload {
   type: 'civic_record';
-  reference_code: string; // JA-<KIND>-<DISTRICT>-<YEAR>-<6CHARS>
+  reference_code: string; // KX-<KIND>-<DISTRICT>-<YEAR>-<6CHARS>
   manifest_key?: Hex;     // Key of immutable dispatch_manifest entity
   kind: CivicRecordKind;
   title: string;

@@ -44,7 +44,7 @@ export function isValidEntityKey(key: string): key is Hex {
 
 /**
  * Generates an automated human-readable reference code (Item 1)
- * Format: JA-<KIND>-<DISTRICT CODE>-<YEAR>-<6 random base32 chars>
+ * Format: KX-<KIND>-<DISTRICT CODE>-<YEAR>-<6 random base32 chars>
  */
 export function generateReferenceCode(kind: string, district: string): string {
   const kindShort = kind.replace('_BATCH', '').replace('_WORK', '').slice(0, 3).toUpperCase();
@@ -57,7 +57,7 @@ export function generateReferenceCode(kind: string, district: string): string {
     rand += chars[Math.floor(Math.random() * chars.length)];
   }
 
-  return `JA-${kindShort}-${distClean}-${year}-${rand}`;
+  return `KX-${kindShort}-${distClean}-${year}-${rand}`;
 }
 
 export function getPublicArkivClient(): PublicArkivClient {
@@ -205,6 +205,15 @@ export async function createCivicRecordOnChain(
       manifest_key: manifestRes.entityKey,
     }),
   });
+
+  // Always cache locally so the record is immediately visible on the frontend
+  // even if the RPC node / indexer has a propagation delay
+  const fullRecord: CivicRecordPayload = {
+    ...record,
+    manifest_key: manifestRes.entityKey,
+  };
+  saveLocalRecord(recordKey, fullRecord, creatorAddress);
+  saveLocalManifest(recordKey, manifestPayload);
 
   return {
     entityKey: recordKey,
@@ -383,6 +392,15 @@ export async function submitGroundReportOnChain(
     expires: ExpirationTime.fromDays(30),
   });
 
+  // Save report locally so it immediately appears in the report list
+  saveLocalReport(
+    res.entityKey,
+    report,
+    (client.account?.address as Hex) || '0x',
+    BigInt(Math.floor(Date.now() / 1000)),
+    res.txHash
+  );
+
   return res;
 }
 
@@ -487,6 +505,17 @@ export async function fetchCivicRecords(): Promise<EntityWithMetadata<CivicRecor
     }
   }
 
+  // Merge any locally published records so records created in the browser
+  // show up immediately without waiting for indexer sync latency
+  const localRecords = getLocalRecords();
+  const seenKeys = new Set(allEntities.map((e) => e.key.toLowerCase()));
+  for (const lr of localRecords) {
+    if (!seenKeys.has(lr.key.toLowerCase())) {
+      allEntities.unshift(lr);
+      seenKeys.add(lr.key.toLowerCase());
+    }
+  }
+
   return allEntities;
 }
 
@@ -501,7 +530,7 @@ export async function fetchCivicRecordByKey(
   manifest: DispatchManifestPayload | null;
 } | null> {
   if (isDemoModeActive()) {
-    const local = getLocalRecords().find((r) => r.key === entityKey);
+    const local = getLocalRecords().find((r) => r.key.toLowerCase() === entityKey.toLowerCase());
     if (!local) return null;
     const manifest = getLocalManifest(entityKey);
     return { record: local, manifest };
@@ -527,7 +556,14 @@ export async function fetchCivicRecordByKey(
   }
 
   const res = await queryBuilder.fetch();
-  if (res.entities.length === 0) return null;
+  if (res.entities.length === 0) {
+    const local = getLocalRecords().find((r) => r.key.toLowerCase() === entityKey.toLowerCase());
+    if (local) {
+      const manifest = getLocalManifest(entityKey);
+      return { record: local, manifest };
+    }
+    return null;
+  }
 
   const e = res.entities[0];
   const record: EntityWithMetadata<CivicRecordPayload> = {
@@ -552,9 +588,12 @@ export async function fetchCivicRecordByKey(
       .fetch();
     if (manRes.entities.length > 0) {
       manifest = manRes.entities[0].toJson() as DispatchManifestPayload;
+    } else {
+      manifest = getLocalManifest(entityKey);
     }
   } catch (mErr) {
     console.warn('Could not query dispatch manifest for record:', mErr);
+    manifest = getLocalManifest(entityKey);
   }
 
   return { record, manifest };
@@ -629,6 +668,16 @@ export async function fetchGroundReports(
     }
   }
 
+  // Merge any local reports that may not yet be indexed
+  const localReports = getLocalReports(recordEntityKey);
+  const seenReportKeys = new Set(reports.map((r) => r.key.toLowerCase()));
+  for (const lr of localReports) {
+    if (!seenReportKeys.has(lr.key.toLowerCase())) {
+      reports.push(lr);
+      seenReportKeys.add(lr.key.toLowerCase());
+    }
+  }
+
   reports.sort((a, b) => (b.blockNumber > a.blockNumber ? 1 : -1));
   return reports;
 }
@@ -664,10 +713,10 @@ export async function fetchRecordRevisions(
 // Local Storage (Explicit Demo Mode Only)
 // -------------------------------------------------------------
 
-const LOCAL_STORAGE_RECORDS_KEY = 'janaudit_local_records';
-const LOCAL_STORAGE_MANIFESTS_KEY = 'janaudit_local_manifests';
-const LOCAL_STORAGE_REPORTS_KEY = 'janaudit_local_reports';
-const LOCAL_STORAGE_REVISIONS_KEY = 'janaudit_local_revisions';
+const LOCAL_STORAGE_RECORDS_KEY = 'krix_local_records';
+const LOCAL_STORAGE_MANIFESTS_KEY = 'krix_local_manifests';
+const LOCAL_STORAGE_REPORTS_KEY = 'krix_local_reports';
+const LOCAL_STORAGE_REVISIONS_KEY = 'krix_local_revisions';
 
 function getLocalRecords(): EntityWithMetadata<CivicRecordPayload>[] {
   if (typeof window === 'undefined') return [];

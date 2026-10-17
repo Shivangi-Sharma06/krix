@@ -1,4 +1,4 @@
-# JanAudit — Product Requirements Document (PRD)
+# Krix — Product Requirements Document (PRD)
 
 **Version:** 1.0 (Hackathon MVP)
 **Date:** 17 Oct 2026
@@ -18,7 +18,7 @@ Centralized databases have a single point of trust. There is no tamper-proof rec
 
 ## 2. Product Vision
 
-JanAudit is a public, tamper-evident audit layer for government supply batches and ward projects. It combines:
+Krix is a public, tamper-evident audit layer for government supply batches and ward projects. It combines:
 
 - an **official, updatable record** with enforced custody transfer, and
 - an **uncensorable citizen/inspector report layer** that nobody can edit or delete,
@@ -55,7 +55,7 @@ JanAudit is a public, tamper-evident audit layer for government supply batches a
 
 > Note: function and flag names below follow the original project concept. Verify exact SDK method names, parameters and entity limits against the current Arkiv docs and Tiramisu chain docs before implementation.
 
-| JanAudit concept | Arkiv primitive |
+| Krix concept | Arkiv primitive |
 |---|---|
 | Supply batch / civic project record | Entity with type `civic_record` (mutable) |
 | Custody handover | `changeOwnership()` |

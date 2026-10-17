@@ -96,24 +96,50 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setIsMetaMask(true);
       const ethereum = (window as any).ethereum;
 
+      const fetchBalance = async (addr: string) => {
+        try {
+          const balHex = await ethereum.request?.({
+            method: 'eth_getBalance',
+            params: [addr, 'latest'],
+          });
+          if (balHex) {
+            const balBigInt = BigInt(balHex);
+            setBalanceGlm((Number(balBigInt) / 1e18).toFixed(3));
+          }
+        } catch {
+          // ignore
+        }
+      };
+
       // Listen for account and chain change events (Item 8)
       const handleAccountsChanged = (accounts: string[]) => {
         if (accounts.length > 0) {
           setAddress(accounts[0] as Hex);
           setActiveDemoWallet(null);
+          fetchBalance(accounts[0]);
         } else {
           setAddress(null);
           setActiveDemoWallet(null);
+          setBalanceGlm('0.00');
         }
       };
 
       const handleChainChanged = (chainId: string) => {
         const isTiramisu = chainId === '0x761351' || chainId === '7738577';
         setIsCorrectNetwork(isTiramisu);
+        if (address) fetchBalance(address);
       };
 
       ethereum.on?.('accountsChanged', handleAccountsChanged);
       ethereum.on?.('chainChanged', handleChainChanged);
+
+      // Check current accounts on mount
+      ethereum.request?.({ method: 'eth_accounts' }).then((accounts: string[]) => {
+        if (accounts && accounts[0]) {
+          setAddress(accounts[0] as Hex);
+          fetchBalance(accounts[0]);
+        }
+      }).catch(() => {});
 
       // Check current chain
       ethereum.request?.({ method: 'eth_chainId' }).then((chainId: string) => {
@@ -125,7 +151,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         ethereum.removeListener?.('chainChanged', handleChainChanged);
       };
     }
-  }, []);
+  }, [address]);
 
   const switchNetwork = async () => {
     if (typeof window === 'undefined' || !(window as any).ethereum) return;
@@ -166,15 +192,50 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         provider = provider.providers.find((p: any) => p.isMetaMask) || provider.providers[0];
       }
 
-      const accounts = await provider.request({ method: 'eth_requestAccounts' });
+      let accounts: string[] = [];
+      try {
+        accounts = await provider.request({ method: 'eth_requestAccounts' });
+      } catch (acctErr: any) {
+        if (acctErr?.code === 4001) {
+          // User rejected connection in MetaMask prompt
+          return;
+        }
+        const errMsg = acctErr?.message || acctErr?.error?.message || (typeof acctErr === 'object' ? JSON.stringify(acctErr) : String(acctErr));
+        console.error('MetaMask accounts request error:', errMsg, acctErr);
+        throw new Error(`MetaMask connection failed: ${errMsg}`);
+      }
+
       if (accounts && accounts[0]) {
-        setAddress(accounts[0] as Hex);
+        const userAddr = accounts[0] as Hex;
+        setAddress(userAddr);
         setActiveDemoWallet(null);
-        await switchNetwork();
+
+        // Fetch balance
+        try {
+          const balHex = await provider.request({
+            method: 'eth_getBalance',
+            params: [userAddr, 'latest'],
+          });
+          if (balHex) {
+            const balBigInt = BigInt(balHex);
+            const balFormatted = (Number(balBigInt) / 1e18).toFixed(3);
+            setBalanceGlm(balFormatted);
+          }
+        } catch {
+          // Non-fatal if balance call fails
+        }
+
+        // Attempt network switch, but don't fail connection if switch is declined
+        try {
+          await switchNetwork();
+        } catch (switchErr: any) {
+          console.warn('Network switch declined or failed:', switchErr?.message || switchErr);
+        }
       }
     } catch (err: any) {
       if (err?.code !== 4001) {
-        console.error('MetaMask connection error:', err);
+        const errorDetail = err?.message || err?.error?.message || (typeof err === 'object' ? JSON.stringify(err) : String(err));
+        console.error('MetaMask connection error detail:', errorDetail);
       }
     }
   };
