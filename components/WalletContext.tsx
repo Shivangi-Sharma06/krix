@@ -82,6 +82,63 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [isCorrectNetwork, setIsCorrectNetwork] = useState(true);
   const [showDemoSwitcher, setShowDemoSwitcher] = useState(false);
 
+  const TIRAMISU_CHAIN_ID = 7738577;
+  const TIRAMISU_CHAIN_ID_HEX = '0x7614d1'; // 7738577 in hex (0x7614d1)
+  const TIRAMISU_CHAIN_CONFIG = {
+    chainId: TIRAMISU_CHAIN_ID_HEX,
+    chainName: 'Tiramisu Testnet',
+    rpcUrls: ['https://rpc.tiramisu.db-chain.testnet.arkiv.network'],
+    nativeCurrency: { name: 'Golem', symbol: 'GLM', decimals: 18 },
+    blockExplorerUrls: ['https://tiramisu.explorer.arkiv.network'],
+  };
+
+  const isTiramisuChain = (chainId: string | number | null | undefined): boolean => {
+    if (!chainId) return false;
+    const str = String(chainId).toLowerCase().trim();
+    if (str === '7738577' || str === '0x7614d1' || str === '0x07614d1') return true;
+    if (str.startsWith('0x')) {
+      const parsedHex = parseInt(str, 16);
+      return parsedHex === 7738577;
+    }
+    const parsedDec = parseInt(str, 10);
+    return parsedDec === 7738577;
+  };
+
+  const switchNetwork = async () => {
+    if (typeof window === 'undefined' || !(window as any).ethereum) return;
+    let provider = (window as any).ethereum;
+    if (provider?.providers?.length) {
+      provider = provider.providers.find((p: any) => p.isMetaMask) || provider.providers[0];
+    }
+
+    try {
+      await provider.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: TIRAMISU_CHAIN_ID_HEX }],
+      });
+      setIsCorrectNetwork(true);
+    } catch (switchError: any) {
+      if (
+        switchError?.code === 4902 ||
+        switchError?.code === -32603 ||
+        switchError?.data?.originalError?.code === 4902 ||
+        switchError?.message?.includes('Unrecognized chain')
+      ) {
+        try {
+          await provider.request({
+            method: 'wallet_addEthereumChain',
+            params: [TIRAMISU_CHAIN_CONFIG],
+          });
+          setIsCorrectNetwork(true);
+        } catch (addError: any) {
+          console.warn('Could not add Tiramisu chain:', addError?.message || addError);
+        }
+      } else {
+        console.warn('Switch chain declined or error:', switchError?.message || switchError);
+      }
+    }
+  };
+
   useEffect(() => {
     const demoMode = isDemoModeActive();
     setShowDemoSwitcher(demoMode);
@@ -94,7 +151,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
     if (typeof window !== 'undefined' && (window as any).ethereum) {
       setIsMetaMask(true);
-      const ethereum = (window as any).ethereum;
+      let ethereum = (window as any).ethereum;
+      if (ethereum?.providers?.length) {
+        ethereum = ethereum.providers.find((p: any) => p.isMetaMask) || ethereum.providers[0];
+      }
 
       const fetchBalance = async (addr: string) => {
         try {
@@ -125,8 +185,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       };
 
       const handleChainChanged = (chainId: string) => {
-        const isTiramisu = chainId === '0x761351' || chainId === '7738577';
-        setIsCorrectNetwork(isTiramisu);
+        const correct = isTiramisuChain(chainId);
+        setIsCorrectNetwork(correct);
         if (address) fetchBalance(address);
       };
 
@@ -138,48 +198,33 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         if (accounts && accounts[0]) {
           setAddress(accounts[0] as Hex);
           fetchBalance(accounts[0]);
+          // Check and auto-switch chain if account is already connected
+          ethereum.request?.({ method: 'eth_chainId' }).then((chainId: string) => {
+            const correct = isTiramisuChain(chainId);
+            setIsCorrectNetwork(correct);
+            if (!correct) {
+              switchNetwork();
+            }
+          }).catch(() => {});
         }
       }).catch(() => {});
 
-      // Check current chain
-      ethereum.request?.({ method: 'eth_chainId' }).then((chainId: string) => {
-        setIsCorrectNetwork(chainId === '0x761351' || chainId === '7738577');
-      }).catch(() => {});
+      // Check current chain on mount and repeat briefly to avoid timing race conditions
+      const checkChain = () => {
+        ethereum.request?.({ method: 'eth_chainId' }).then((chainId: string) => {
+          setIsCorrectNetwork(isTiramisuChain(chainId));
+        }).catch(() => {});
+      };
+      checkChain();
+      const interval = setInterval(checkChain, 5000);
 
       return () => {
+        clearInterval(interval);
         ethereum.removeListener?.('accountsChanged', handleAccountsChanged);
         ethereum.removeListener?.('chainChanged', handleChainChanged);
       };
     }
   }, [address]);
-
-  const switchNetwork = async () => {
-    if (typeof window === 'undefined' || !(window as any).ethereum) return;
-    const provider = (window as any).ethereum;
-    try {
-      await provider.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: '0x761351' }],
-      });
-      setIsCorrectNetwork(true);
-    } catch (switchError: any) {
-      if (switchError?.code === 4902) {
-        await provider.request({
-          method: 'wallet_addEthereumChain',
-          params: [
-            {
-              chainId: '0x761351',
-              chainName: 'Tiramisu Testnet',
-              rpcUrls: ['https://rpc.tiramisu.db-chain.testnet.arkiv.network'],
-              nativeCurrency: { name: 'Golem', symbol: 'GLM', decimals: 18 },
-              blockExplorerUrls: ['https://tiramisu.explorer.arkiv.network'],
-            },
-          ],
-        });
-        setIsCorrectNetwork(true);
-      }
-    }
-  };
 
   const connectMetaMask = async () => {
     if (typeof window === 'undefined' || !(window as any).ethereum) {
@@ -201,14 +246,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         const errMsg = acctErr?.message || acctErr?.error?.message || (typeof acctErr === 'object' ? JSON.stringify(acctErr) : String(acctErr));
-        console.error('MetaMask accounts request error:', errMsg, acctErr);
-        throw new Error(`MetaMask connection failed: ${errMsg}`);
+        console.warn('MetaMask account request declined:', errMsg);
+        return;
       }
 
       if (accounts && accounts[0]) {
         const userAddr = accounts[0] as Hex;
         setAddress(userAddr);
         setActiveDemoWallet(null);
+
+        // Auto-switch to Tiramisu chain
+        try {
+          const currentChain = await provider.request({ method: 'eth_chainId' });
+          if (!isTiramisuChain(currentChain)) {
+            await switchNetwork();
+          } else {
+            setIsCorrectNetwork(true);
+          }
+        } catch {
+          // continue
+        }
 
         // Fetch balance
         try {
@@ -224,18 +281,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         } catch {
           // Non-fatal if balance call fails
         }
-
-        // Attempt network switch, but don't fail connection if switch is declined
-        try {
-          await switchNetwork();
-        } catch (switchErr: any) {
-          console.warn('Network switch declined or failed:', switchErr?.message || switchErr);
-        }
       }
     } catch (err: any) {
       if (err?.code !== 4001) {
         const errorDetail = err?.message || err?.error?.message || (typeof err === 'object' ? JSON.stringify(err) : String(err));
-        console.error('MetaMask connection error detail:', errorDetail);
+        console.warn('MetaMask connection notice:', errorDetail);
       }
     }
   };
@@ -253,7 +303,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const getArkivClient = () => {
     if (typeof window !== 'undefined' && (window as any).ethereum && !activeDemoWallet) {
-      return getWalletArkivClient((window as any).ethereum);
+      let provider = (window as any).ethereum;
+      if (provider?.providers?.length) {
+        provider = provider.providers.find((p: any) => p.isMetaMask) || provider.providers[0];
+      }
+      return getWalletArkivClient(provider, address);
     }
     return {
       account: { address: address || PRESET_WALLETS[0].address },

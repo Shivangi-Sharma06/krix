@@ -35,9 +35,15 @@ export default function NewRecordPage() {
     setReferenceCode(generateReferenceCode(kind, district));
   }, [kind, district]);
 
+  const [publishingStep, setPublishingStep] = useState<string>('');
+  const [createdRecord, setCreatedRecord] = useState<{ entityKey: string; manifestKey: string; txHash: string } | null>(null);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return; // Prevent multiple attempts while transaction is in flight
+
     setErrorMessage(null);
+    setCreatedRecord(null);
 
     if (!isConnected) {
       setErrorMessage('Please connect your wallet first.');
@@ -45,8 +51,11 @@ export default function NewRecordPage() {
     }
 
     if (!isCorrectNetwork) {
-      await switchNetwork();
-      return;
+      try {
+        await switchNetwork();
+      } catch (e) {
+        console.warn('Switch network in submit:', e);
+      }
     }
 
     if (!formData.title.trim()) {
@@ -55,6 +64,7 @@ export default function NewRecordPage() {
     }
 
     setLoading(true);
+    setPublishingStep('1/3: Checking gas balance...');
     try {
       // Check if wallet has gas tokens
       if (typeof window !== 'undefined' && (window as any).ethereum && balanceGlm === '0.00') {
@@ -67,6 +77,7 @@ export default function NewRecordPage() {
           if (balHex && BigInt(balHex) === 0n) {
             setErrorMessage('Your wallet has 0 $GLM on Tiramisu Testnet. Publishing an on-chain record requires gas tokens.');
             setLoading(false);
+            setPublishingStep('');
             return;
           }
         } catch {
@@ -74,6 +85,7 @@ export default function NewRecordPage() {
         }
       }
 
+      setPublishingStep('2/3: Prompting wallet transaction to register record & immutable manifest on Arkiv...');
       const client = getArkivClient();
       const res = await createCivicRecordOnChain(client, {
         reference_code: referenceCode,
@@ -91,8 +103,13 @@ export default function NewRecordPage() {
         type: 'civic_record',
       });
 
-      // Redirect to the canonical entityKey URL (Item 1)
-      router.push(`/records/${res.entityKey}`);
+      setPublishingStep('3/3: Stored successfully on Arkiv. Redirecting to record...');
+      setCreatedRecord(res);
+
+      // Short delay so user sees confirmed state before redirect
+      setTimeout(() => {
+        router.push(`/records/${res.entityKey}`);
+      }, 1200);
     } catch (err: any) {
       console.error('Failed to create civic record:', err);
       const rawMsg = err?.message || err?.error?.message || String(err);
@@ -103,6 +120,7 @@ export default function NewRecordPage() {
       }
     } finally {
       setLoading(false);
+      setPublishingStep('');
     }
   };
 
@@ -123,6 +141,65 @@ export default function NewRecordPage() {
           Publishes an official mutable entity (<code>civic_record</code>) alongside its companion immutable manifest (<code>dispatch_manifest</code>) on the Arkiv blockchain.
         </p>
       </div>
+
+      {publishingStep && (
+        <div
+          role="status"
+          style={{
+            backgroundColor: 'var(--info-bg)',
+            border: '1px solid var(--info-border)',
+            color: 'var(--info)',
+            padding: '14px 18px',
+            borderRadius: 'var(--radius-card)',
+            marginBottom: '24px',
+            fontSize: '14px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+          }}
+        >
+          <span className="spinner" style={{ display: 'inline-block', width: '14px', height: '14px', border: '2px solid var(--info)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+          <span>{publishingStep}</span>
+        </div>
+      )}
+
+      {createdRecord && (
+        <div
+          role="alert"
+          style={{
+            backgroundColor: 'var(--success-bg)',
+            border: '1px solid var(--success-border)',
+            color: 'var(--success)',
+            padding: '16px 20px',
+            borderRadius: 'var(--radius-card)',
+            marginBottom: '24px',
+            fontSize: '14px',
+          }}
+        >
+          <div style={{ fontWeight: 600, fontSize: '15px', marginBottom: '6px' }}>
+            Record Successfully Stored in Arkiv Database
+          </div>
+          <div style={{ fontSize: '13px', marginBottom: '8px' }}>
+            Entity Key: <code className="mono" style={{ color: 'var(--text-main)' }}>{createdRecord.entityKey}</code>
+          </div>
+          <div style={{ display: 'flex', gap: '14px', fontSize: '13px' }}>
+            <a
+              href={`https://tiramisu.explorer.arkiv.network/tx/${createdRecord.txHash}`}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: 'var(--accent)', textDecoration: 'underline', fontWeight: 600 }}
+            >
+              View Transaction on Tiramisu Explorer &rarr;
+            </a>
+            <Link
+              href={`/records/${createdRecord.entityKey}`}
+              style={{ color: 'var(--accent)', textDecoration: 'underline', fontWeight: 600 }}
+            >
+              Open Record Page &rarr;
+            </Link>
+          </div>
+        </div>
+      )}
 
       {errorMessage && (
         <div
@@ -334,17 +411,34 @@ export default function NewRecordPage() {
         </div>
 
         {/* Submit Button */}
-        <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '16px', display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+        <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '16px', display: 'flex', justifyContent: 'flex-end', gap: '12px', alignItems: 'center' }}>
           <Link href="/records" className="btn btn-secondary btn-md">
             Cancel
           </Link>
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || !!createdRecord}
             className="btn btn-primary btn-md"
-            style={{ minWidth: '160px' }}
+            style={{
+              minWidth: '180px',
+              opacity: loading || !!createdRecord ? 0.7 : 1,
+              cursor: loading || !!createdRecord ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+            }}
           >
-            {loading ? 'Publishing to Arkiv...' : 'Publish On-Chain'}
+            {loading ? (
+              <>
+                <span className="spinner" style={{ width: '14px', height: '14px', border: '2px solid currentColor', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite', display: 'inline-block' }} />
+                <span>Publishing to Arkiv...</span>
+              </>
+            ) : createdRecord ? (
+              'Confirmed On-Chain'
+            ) : (
+              'Publish On-Chain'
+            )}
           </button>
         </div>
       </form>

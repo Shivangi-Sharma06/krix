@@ -67,18 +67,23 @@ export function getPublicArkivClient(): PublicArkivClient {
   });
 }
 
-export function getWalletArkivClient(accountOrProvider: Account | any): WalletArkivClient {
-  const transport: Transport =
-    typeof accountOrProvider === 'object' && 'request' in accountOrProvider
-      ? custom(accountOrProvider)
-      : http(RPC_URL);
+export function getWalletArkivClient(accountOrProvider: Account | any, userAddress?: Hex | string | null): WalletArkivClient {
+  const isEip1193 = typeof accountOrProvider === 'object' && 'request' in accountOrProvider;
+  const transport: Transport = isEip1193 ? custom(accountOrProvider) : http(RPC_URL);
+
+  let account = undefined;
+  if (!isEip1193) {
+    account = accountOrProvider;
+  } else if (userAddress) {
+    account = userAddress as Hex;
+  } else if (accountOrProvider?.selectedAddress) {
+    account = accountOrProvider.selectedAddress as Hex;
+  }
 
   return createArkivWalletClient({
     chain: tiramisu,
     transport,
-    ...(typeof accountOrProvider === 'object' && !('request' in accountOrProvider)
-      ? { account: accountOrProvider }
-      : {}),
+    ...(account ? { account } : {}),
   });
 }
 
